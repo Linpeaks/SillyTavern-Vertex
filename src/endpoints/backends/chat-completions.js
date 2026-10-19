@@ -70,6 +70,8 @@ import { getVertexAIAuth, getProjectIdFromServiceAccount } from '../google.js';
 import { getCookieSecret } from '../../users.js';
 import { fetchGoogleModels, GoogleModelsHttpError } from './google-models.js';
 import { fetchVertexHttp2, forwardVertexResponse, getVertexHttp2Proxy } from '../../vertex-http2.js';
+import { validateNativePdfRequest, assertNativePdfReferences } from '../../../public/scripts/native-pdf.js';
+import { resolveNativePdfs } from '../../native-pdf.js';
 
 const API_OPENAI = 'https://api.openai.com/v1';
 const API_CLAUDE = 'https://api.anthropic.com/v1';
@@ -691,6 +693,15 @@ async function sendMakerSuiteRequest(request, response) {
 
     try {
         const apiVersion = getConfigValue('gemini.apiVersion', 'v1beta');
+        if (request.body.native_pdf_refs?.length) {
+            const refs = validateNativePdfRequest(request.body);
+            if (!nativeVertex) throw new Error('Native PDF requires a native Vertex connection.');
+            try {
+                await resolveNativePdfs(body, request.user.directories, refs);
+            } catch (error) {
+                return response.status(400).send({ error: true, message: error.message });
+            }
+        }
         const responseType = (stream ? 'streamGenerateContent' : 'generateContent');
 
         let url;
@@ -2290,6 +2301,14 @@ router.post('/generate', async function (request, response) {
     try {
         if (!request.body) return response.status(400).send({ error: true });
 
+        let nativePdfRefs;
+        try {
+            nativePdfRefs = validateNativePdfRequest(request.body);
+            if (nativePdfRefs.length) request.body.native_pdf_refs = nativePdfRefs.map(ref => ref.marker);
+        } catch (error) {
+            return response.status(400).send({ error: true, message: error.message });
+        }
+
         const postProcessingType = request.body.custom_prompt_post_processing;
         if (Array.isArray(request.body.messages) && postProcessingType) {
             console.info('Applying custom prompt post-processing of type', postProcessingType);
@@ -2297,6 +2316,10 @@ router.post('/generate', async function (request, response) {
                 request.body.messages,
                 postProcessingType,
                 getPromptNames(request));
+        }
+
+        try { assertNativePdfReferences(nativePdfRefs, request.body.messages); } catch (error) {
+            return response.status(400).send({ error: true, message: error.message });
         }
 
         if (request.body.json_schema?.value) {

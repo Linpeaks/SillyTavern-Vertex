@@ -7,8 +7,18 @@ import { sync as writeFileSyncAtomic } from 'write-file-atomic';
 
 import { validateAssetFileName } from './assets.js';
 import { clientRelativePath } from '../util.js';
+import { storeNativePdf } from '../native-pdf.js';
 
 export const router = express.Router();
+
+router.post('/upload-pdf', async (request, response) => {
+    try {
+        return response.send(await storeNativePdf(request.user.directories, request.body?.data));
+    } catch (error) {
+        // No file contents, local paths or user filenames in diagnostics.
+        return response.status(400).send({ error: 'PDF upload failed. Use a valid, unlocked PDF up to 5 MiB and 100 pages.' });
+    }
+});
 
 router.post('/sanitize-filename', async (request, response) => {
     try {

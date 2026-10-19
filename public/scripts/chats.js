@@ -28,6 +28,7 @@ import {
     getMediaIndex,
     getMediaDisplay,
     chatElement,
+    main_api,
 } from '../script.js';
 import { selected_group } from './group-chats.js';
 import { power_user } from './power-user.js';
@@ -57,6 +58,8 @@ import { t } from './i18n.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './constants.js';
+import { nativePdfMarker, NATIVE_PDF_LIMITS, supportsNativePdf } from './native-pdf.js';
+import { oai_settings } from './openai.js';
 
 /**
  * @typedef {Object} FileAttachment
@@ -65,6 +68,11 @@ import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTI
  * @property {string} name File name
  * @property {number} created Timestamp
  * @property {string} [text] File text
+ * @property {string} [mode] Native PDF or existing text attachment
+ * @property {string} [id] Opaque native PDF ID
+ * @property {string} [sha256] Original PDF digest
+ * @property {number} [pages] Validated PDF page count
+ * @property {string} [mimeType] Original MIME type
  */
 
 /**
@@ -196,13 +204,43 @@ export async function unhideChatMessage(messageId, _messageBlock) {
  * @returns {Promise<void>} A promise that resolves when file is uploaded.
  */
 export async function populateFileAttachment(message, inputId = 'file_form_input') {
+    const nativePdf = inputId === 'file_form_input'
+        ? $('#pdf_attachment_mode').val() === 'native' : document.getElementById(inputId)?.dataset.pdfMode === 'native';
+    const uploadedPdfs = [];
     try {
         if (!message) return;
         if (!message.extra || typeof message.extra !== 'object') message.extra = {};
         const fileInput = document.getElementById(inputId);
         if (!(fileInput instanceof HTMLInputElement)) return;
 
+        if (nativePdf) {
+            const pdfs = [...fileInput.files].filter(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
+            const existing = (message.extra.files || []).filter(file => file.mode === 'native');
+            if (pdfs.length + existing.length > NATIVE_PDF_LIMITS.files
+                || [...pdfs, ...existing].reduce((sum, file) => sum + file.size, 0) > NATIVE_PDF_LIMITS.totalBytes) {
+                throw new Error('Original PDF limit: 4 attachments and 12 MiB per message.');
+            }
+        }
+
         for (const file of fileInput.files) {
+            if (nativePdf && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name))) {
+                if (main_api !== 'openai' || !supportsNativePdf(oai_settings)) {
+                    throw new Error('Original PDFs require native Vertex AI with gemini-4-argon. Select Extract text for other connections.');
+                }
+                if (!message.is_user) throw new Error('Attach original PDFs to user messages.');
+                if (file.size > NATIVE_PDF_LIMITS.fileBytes) throw new Error('Original PDF limit: 5 MiB per file.');
+                const data = (await getBase64Async(file)).split(',')[1];
+                const response = await fetch('/api/files/upload-pdf', {
+                    method: 'POST', headers: getRequestHeaders(), body: JSON.stringify({ data }),
+                });
+                const uploaded = await response.json();
+                if (!response.ok) throw new Error(uploaded.error || 'PDF upload failed.');
+                if (!Array.isArray(message.extra.files)) message.extra.files = [];
+                const attachment = { ...uploaded, name: file.name, created: Date.now() };
+                message.extra.files.push(attachment);
+                uploadedPdfs.push(attachment);
+                continue;
+            }
             const slug = getStringHash(file.name);
             const fileNamePrefix = `${Date.now()}_${slug}`;
             const fileBase64 = await getBase64Async(file);
@@ -258,6 +296,15 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
             }
         }
     } catch (error) {
+        if (nativePdf) {
+            // Roll back only PDFs created by this failed upload batch.
+            for (const attachment of uploadedPdfs) {
+                message.extra.files = message.extra.files.filter(file => file !== attachment);
+                await deleteFileFromServer(attachment.url);
+            }
+            toastr.error(error.message, t`Could not upload the PDF`);
+            throw error; // Never silently generate after a failed original-file upload.
+        }
         console.error('Could not upload file', error);
         toastr.error(t`Either the file is corrupted or its format is not supported.`, t`Could not upload the file`);
     } finally {
@@ -375,6 +422,8 @@ async function onFileAttach(fileList) {
     const title = [...fileList].map(x => x.name).join('\n');
     $('#file_form .file_name').text(name).attr('title', title);
     $('#file_form .file_size').text(humanFileSize(size)).attr('title', size);
+    $('#pdf_attachment_mode_label').toggleClass('displayNone', ![...fileList].some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)))
+        .attr('title', 'Original PDF: native Vertex Argon; 5 MiB per file, 4 files / 100 pages / 12 MiB per request. PDF context usage is estimated.');
     $('#file_form').removeClass('displayNone');
 
     // Reset form on chat change (if not on a welcome screen)
@@ -492,7 +541,15 @@ function embedMessageFile(messageId, messageBlock) {
             }
         }
 
-        await populateFileAttachment(message, 'embed_file_input');
+        e.target.dataset.pdfMode = 'text';
+        if ([...e.target.files].some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name))) {
+            const select = $('<select>').append($('<option>').val('text').text(t`Extract text`),
+                $('<option>').val('native').text(t`Original PDF (Vertex Argon)`));
+            const result = await callGenericPopup($('<div>').append($('<p>').text('PDF attachment mode (original: 5 MiB per file, 100 pages total)')).append(select), POPUP_TYPE.CONFIRM);
+            if (result !== POPUP_RESULT.AFFIRMATIVE) { e.target.value = ''; return; }
+            e.target.dataset.pdfMode = String(select.val());
+        }
+        try { await populateFileAttachment(message, 'embed_file_input'); } catch { return; }
         await eventSource.emit(event_types.MESSAGE_FILE_EMBEDDED, messageId);
         appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
         await saveChatConditional();
@@ -515,6 +572,11 @@ export async function appendFileContent(message, messageText) {
     if (Array.isArray(message.extra?.files) && message.extra.files.length > 0) {
         const fileTexts = [];
         for (const file of message.extra.files) {
+            if (file.mode === 'native') {
+                if (main_api !== 'openai') throw new Error('Original PDFs require Chat Completion with native Vertex Argon. Reattach using text extraction.');
+                fileTexts.push(`${file.name}\n${nativePdfMarker(file)}`);
+                continue;
+            }
             const fileText = file.text || (await getFileAttachment(file.url));
             if (fileText) {
                 fileTexts.push(fileText);
@@ -1155,6 +1217,13 @@ export async function deleteFileFromServer(url, silent = false) {
  * @param {FileAttachment} attachment File attachment
  */
 async function openFilePopup(attachment) {
+    if (attachment.mode === 'native') {
+        const url = new URL(attachment.url, window.location.href);
+        if (url.origin !== window.location.origin) throw new Error('Invalid PDF attachment URL.');
+        const link = $('<a>').attr({ href: url.href, download: attachment.name }).text(t`Download original PDF`);
+        await callGenericPopup($('<div>').append($('<p>').text(`${attachment.name} · ${attachment.pages} pages · ${humanFileSize(attachment.size)}`)).append(link), POPUP_TYPE.TEXT);
+        return;
+    }
     const fileText = attachment.text || (await getFileAttachment(attachment.url));
 
     const modalTemplate = $('<div><pre><code></code></pre></div>');

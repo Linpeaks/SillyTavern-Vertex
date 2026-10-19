@@ -482,6 +482,37 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 
 补充审查：B 已提交 1cc4a1bbd。检查多行 data 时，发现观察器应把当前未结束行和已缓存 data 合并计入同一容量预算，已将边界检查改为 line.length + size；这是诊断内存界限收紧，不影响原始流。单独补充 fix 提交。完整回归中 25 套件 503 项通过、1 项既有可选慢测试跳过（该时点含 PDF 首批隔离测试，后续最终数字另记）。
 
+### C. PDF 原文件输入第一阶段
+
+**实现与边界**
+
+- 新增 public/scripts/native-pdf.js 作为浏览器/后端共享的引用、能力和限额规则；新增 src/native-pdf.js 处理校验、用户目录保存和最终 inlineData 组装。首版只支持原生 Vertex（Full/Express）+ 精确模型 gemini-4-argon；反向代理、其他模型/供应商明确拒绝，不静默丢文件或自动改成文本重发。
+- public/index.html 的聊天待发送附件增加 PDF 模式选择；默认仍为提取文本。public/scripts/chats.js 支持原文件上传、用户消息内追加附件、下载原文件、历史引用和失败批次只撤回新建 PDF。原有文本附件与资料库/RAG 路径不变；旧文本附件无法还原 PDF，需要重新选择原文件。新增简繁中文标签。
+- 原文件存放在当前认证用户 files 目录，使用服务器生成 UUID 文件名。聊天 JSON 仅保存 id、URL、SHA256、MIME、大小、页数、显示名称，不长期保存 Base64。服务端严格限定 UUID 名称、真实父目录、非符号链接、文件大小，并重新核对哈希及页数；不允许客户端传任意文件系统路径。上传用独占新文件写入，不覆盖已有文件。
+- 复用仓库已自带 PDF.js 4.7.76，延迟加载，仅解析文档/页树验证，不提取文字或渲染，不执行 PDF JavaScript；没有增加生产依赖或变更 package/lock。真实加密 PDF 拒绝；格式/页树可验证不代表已经渲染每一页或排除所有 PDF 内部资源损坏，Google 仍可能拒绝特定文件，不自动重试。
+- 本地先行限额：每文件 5 MiB；所选上下文最多 4 个 PDF 引用、合计 100 页/12 MiB；最终编码后的整个 Google JSON 请求最多 20 MiB。这些是本实现的保守限额，不是官方最大能力。前端预留约 4096 token/页的估计预算，避免把 PDF 当零成本附件；不是实际计费/精确 countTokens，无法保证所有密集文档绝不超模型上下文。
+- 为兼容预设把消息字符串化，附件在**临时提示词文本**中使用不含正文的固定格式引用，随该消息进入上下文预算及历史截取；聊天中保存的仍是元数据。CHAT_COMPLETION_PROMPT_READY、CHAT_COMPLETION_SETTINGS_READY 和后端 postProcessPrompt 后均校验引用集合/次数；实际发送前，在 Google contents 原文本位置替换为 application/pdf inlineData。文件名称作为文本上下文保留。PDF 没有伪装为图片，完整字节仅在后端发请求时转 Base64。
+- 此方案覆盖原先 SPreset 的 contentToText/JSON 包裹形状与真实 merge_tools 后处理。若别的扩展删除、复制或损坏选中引用，明确报错；如果更早阶段把整个历史消息排除在上下文外，则该附件也不发送，符合所选历史范围。系统指令中无法安全归位或工具转换丢引用也拒绝，避免错误归属。
+- 原生 PDF 上传限于用户消息。删除沿用现有聊天附件删除逻辑；同一文件被复制到其他聊天时共享引用的既有删除语义未改，文件缺失会提示重新附加。切换不支持的提供商/模型后，包含原生 PDF 的上下文会报明确错误；需要用户自行重新附加为文本。
+- src/endpoints/files.js 新增 /upload-pdf；src/endpoints/backends/chat-completions.js 在供应商分派前验证能力/引用、文本后处理后复核，并在实际调用前完成文件组装及编码大小检查。原有传输与停止按钮仍使用同一个 AbortSignal；未新增云存储、Files API、自动重提生成或工具分片。Google SDK 文档再次确认 Files.upload 不适用于 Vertex，故没有复用 AI Studio 上传通道。
+
+**验证与审查**
+
+- tests/fixtures/native-pdf.js 构造带文字、矢量图表和光栅图像、真实 xref 的合成 PDF；native-pdf-encrypted.pdf 是该合成文件经现有 bundled pypdf 加密的专用夹具，密码 synthetic-test-password，无私人内容/凭据。新增三套测试覆盖原字节/SHA一致、多个文件及消息位置、JSON 重载、中文名称、旧文本附件、失败批次撤回、目录隔离/缺失/改动/非法引用、预设压缩、merge_tools、真实上传/生成路由、tool-only 响应、模型切换和零提交的错误路径。
+- 已额外验证真正的密码保护 PDF、损坏/非 PDF/Base64 非法、101 页、数量/总大小/编码请求大小限制。PDF 三套定向测试先后共 15 项通过；真实 Google fetch 被本机 mock 截获，不读取服务账户或实际聊天。
+- 用 Playwright 技能进行了独立 Chrome 页面验证：加载生产 file_form 与生产 onFileAttach/populateFileAttachment/appendFileContent 函数，使用隔离后端及合成文件；默认文本模式、显式选择原文件、保存元数据、构成 1 个 PDF part / 1 页、表单 reset 回到文本、损坏文件明确报错均通过。其余页面依赖为合成 stub，**不等同于完整酒馆页面/用户主题/在线 SPreset 的浏览器集成验证**。没有刷新用户酒馆页面、修改运行设置或发送 Google 生成。
+- 临时探针首跑相对导入路径写错，已修正；沙箱内 Chrome Crashpad 无法启动，改为自动审核通过的独立临时浏览器。页面唯一非业务错误为测试页 favicon 404，损坏文件测试另有预期 HTTP400。测试服务和浏览器均已关闭；仅本轮创建的临时源码、截图目录内合成文件及 CLI 快照经过工作区绝对路径确认后清理，未动用户进程/数据。
+- 所有修改的 JS 已通过 ESLint，git diff --check 通过。AGENTS.md 记录本次后续授权范围。最终全套与 Git 结果见下节。
+
+### D. 最终验收与交付记录
+
+- 最终全套启用 VERTEX_LONG_IDLE_TEST=1：**27 套件、513 项全部通过，0 跳过，72.79 秒**。包含 65 秒真实定时器静默保活、HTTP/2/CONNECT/TLS/取消/原字节转发和新功能测试。完成后补充收尾审查：忽略非文本空 part、取消追加附件弹窗时清空文件选择、追加上传失败后不发出成功事件；再次执行 PDF 三套定向回归及 ESLint。
+- 分支 codex/vertex-gemini-investigation；本轮思考片段提交 0f6273b64、诊断提交 1cc4a1bbd、诊断边界补充 c0f7677ef；PDF 采用独立 feat 提交，提交号可由 git log 查到，不把本提交自身哈希写回制造递归记录。提交只显式列出源码/合成测试/翻译/AGENTS/本日志，保留原有未跟踪 _claude，不提交附件、凭据、请求体或实际聊天。未推送远端。
+- 本轮没有修改 config.yaml、预设、世界书、扩展或用户聊天；没有调用 Google 生成或重复提交。保留 003 的实机成功证据；本轮新增证据是本机协议/路由/浏览器隔离验证，实际 Google PDF 阅读、在线预设版本及用户主题仍待正常使用验证。
+- 使用方式：结束当前生成后，以 Start.bat 重启后端并刷新页面；选 PDF 后在附件条选择“发送 PDF 原文件（Vertex Argon）”，也可给历史用户消息追加。默认文本与既有聊天继续沿用原方式。更详细等待提示可在 config.yaml 的 gemini.vertexHttp2 下设置 progressIntervalMs: 60000；默认 0 不定时刷日志。observeSse: false 可关闭语义统计，仍保留传输摘要。无需修改当前 30 秒 PING。
+- 回滚优先按功能进行 git revert；若要撤销诊断，可先撤销边界补充再撤销诊断提交；撤销 PDF 功能前先把需要继续使用的原生 PDF 重新附加为文本。正常文件系统备份应同时包含聊天与 user/files 中原文件，仅导出聊天 JSON 不会打包 PDF。
+- 下一步为用户日常生成观察：若仍无提前思考，查看 sse.firstThoughtMs/thoughtChars 与 finishReasons/usage；thoughtChars=0 只表示未观察到摘要，toolParts>0 且 textChars=0 仍可能是合法工具正文。skippedEvents/malformedEvents/incompleteEvent 需同时考虑，不能凭诊断缺项判空或自动重试。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

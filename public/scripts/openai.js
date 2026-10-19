@@ -82,6 +82,7 @@ import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
 import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
+import { getNativePdfReferences, assertNativePdfReferences, validateNativePdfRequest, estimateNativePdfTokens } from './native-pdf.js';
 
 export {
     openai_messages_count,
@@ -1616,7 +1617,9 @@ export async function prepareOpenAIMessages({
     const chat = chatCompletion.getChat();
 
     const eventData = { chat, dryRun };
+    const nativePdfRefs = getNativePdfReferences(chat);
     await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
+    assertNativePdfReferences(nativePdfRefs, chat);
 
     openai_messages_count = chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
 
@@ -3142,8 +3145,12 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     }
 
     const model = getChatCompletionModel(oai_settings);
+    const nativePdfRefs = getNativePdfReferences(messages);
     const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema });
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
+    assertNativePdfReferences(nativePdfRefs, generate_data.messages);
+    if (nativePdfRefs.length) generate_data.native_pdf_refs = nativePdfRefs.map(ref => ref.marker);
+    validateNativePdfRequest(generate_data);
 
     const generate_url = '/api/backends/chat-completions/generate';
     const response = await fetch(generate_url, {
@@ -3459,7 +3466,7 @@ class TokenHandler {
      * @returns {Promise<number>} The token count
      */
     async countAsync(messages, full, type) {
-        const token_count = await this.countTokenAsyncFn(messages, full);
+        const token_count = await this.countTokenAsyncFn(messages, full) + estimateNativePdfTokens(messages);
         this.counts[type] += token_count;
 
         return token_count;
