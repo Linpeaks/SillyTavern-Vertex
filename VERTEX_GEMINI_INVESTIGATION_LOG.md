@@ -219,7 +219,20 @@ git diff 06bde939fb1e9c4c8d8641d810f0a916b5bce127 -- src public tests package.js
 
 下一步等待用户批准阶段 1 + 阶段 2（分开实现、测试、提交）。当前尚未开始业务修复。
 
-## 附录：本轮可复现诊断
+## 002A · 2026-10-19（Asia/Shanghai）· 授权实施与思考等级修复
+
+- 用户要求：结合新的“测试消息成功、实际指令失败”日志，完成 ECONNRESET 与思考等级优化，谨慎、干净、简洁。本轮明确授权此前两阶段业务修复，不再等待重复确认。
+- 新附件只提取技术元数据，没有把真实提示词、工具正文、凭据或项目标识复制进仓库。成功请求（附件 48-107 行）为非流式，STOP，输入 32 token、输出 13 token、总计 45，模型 Argon；失败请求（110-1085 行）为带 systemInstruction 和 function_declarations 的流式请求，tool choice=AUTO，在 fetch 处 ECONNRESET。两者 generationConfig 均无 thinkingConfig。日志证实运行服务也是 Node v26.1.0。
+- 结论：短请求成功支持当时鉴权/模型可访问，不能外推长流式稳定；失败没有可用的精确耗时/收包信息。模型参数遗漏由真实日志再次证实，网络断开方仍未确定。
+- 工作区起点 dc2d6b1f5；已有用户未跟踪目录 _claude/，保持原样且不暂存。只按明确文件清单提交。
+- 实际修改：src/prompt-converters.js 增加精确 gemini-4-argon 映射；chat-completions.js 将该 ID 纳入 thinkingConfig；Auto/未知等级省略等级，min/low=LOW、medium=MEDIUM、high/max=HIGH。保留 includeThoughts 与其他模型行为，不修改已保存预设。
+- 测试：扩展 tests/prompt-converters.test.js；新增 tests/google-request.test.js，从生产源码提取整个 Google handler，以假认证/网络隔离执行，核对 Vertex 与 AI Studio 请求体、旧模型、未知模型、纯工具正文和签名。
+- 验证命令：在 tests/ 运行 node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.json --runInBand --verbose=false prompt-converters.test.js google-request.test.js。2 套件、184 测试全部通过，其中请求体矩阵实际覆盖两种提供商、六等级和两种 thoughts 设置。不是付费 API 或真实浏览器验证。
+- 测试环境：用现有 tests/package-lock.json 执行 npm ci --ignore-scripts，未修改依赖清单/锁文件。Jest 起初被沙箱 realpath 权限阻止（换临时目录仍失败），通过工具权限提升后通过；该失败属于运行环境，不属于业务断言失败。
+- AGENTS.md 更新当前已授权范围，后续继续按问题记录和提交。
+- 本阶段以独立思考修复提交保存。下一阶段实现 Vertex 专用 HTTP/2 传输、取消/清理与脱敏诊断；不自动重试、不启用工具参数分片、不还原旧仓库复杂补丁。
+
+## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
 

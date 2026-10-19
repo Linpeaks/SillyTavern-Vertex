@@ -1180,6 +1180,22 @@ export function calculateClaudeBudgetTokens(maxTokens, reasoningEffort, stream, 
  * @returns {number|string|null} Budget tokens
  */
 export function calculateGoogleBudgetTokens(maxTokens, reasoningEffort, model) {
+    // Argon uses levels, not a token budget. In particular, Medium must stay Medium.
+    if (model === 'gemini-4-argon') {
+        switch (reasoningEffort) {
+            case REASONING_EFFORT.min:
+            case REASONING_EFFORT.low:
+                return 'LOW';
+            case REASONING_EFFORT.medium:
+                return 'MEDIUM';
+            case REASONING_EFFORT.high:
+            case REASONING_EFFORT.max:
+                return 'HIGH';
+            default:
+                return null;
+        }
+    }
+
     function getFlashBudget() {
         let budgetTokens = 0;
 

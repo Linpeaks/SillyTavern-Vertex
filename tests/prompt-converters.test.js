@@ -153,6 +153,15 @@ describe('calculateClaudeBudgetTokens', () => {
 
 
 describe('calculateGoogleBudgetTokens', () => {
+    test.each([
+        ['auto', null], ['min', 'LOW'], ['low', 'LOW'],
+        ['medium', 'MEDIUM'], ['high', 'HIGH'], ['max', 'HIGH'],
+        ['unknown', null],
+    ])('Argon maps %s without a token budget', (effort, expected) => {
+        expect(mod.calculateGoogleBudgetTokens(65535, effort, 'gemini-4-argon')).toBe(expected);
+        expect(mod.calculateGoogleBudgetTokens(256, effort, 'gemini-4-argon')).toBe(expected);
+    });
+
     test('returns null for unrecognized model', () => {
         expect(mod.calculateGoogleBudgetTokens(8192, 'medium', 'gpt-4')).toBeNull();
     });
