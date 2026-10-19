@@ -332,6 +332,135 @@ gemini:
 - 后续回滚优先 `git revert <对应实现提交SHA>`。仅需停用保活可先用上述配置开关；思考修复和连接修复可分别定位。
 - 下一步是用户重启后的一次正常长工具正文使用，检查新元数据；如果仍失败，用实际 headersMs/lastDataMs/PING/错误分类继续单变量调查。真实 TUN 长等待、浏览器预设最终展示、Google 计算量及 15/30 秒链路对照均尚未验证，不把本地测试描述为全部网络问题已根治。
 
+## 003 · 2026-10-19（Asia/Shanghai）· 成功实机日志复核、预设显示链与 PDF 方案审查
+
+状态：**本轮仅调查，不修改生产代码、配置、预设、世界书或浏览器运行状态。** 用户明确表示多次生成已成功、两次为自己停止，要求结合新日志、旧修改对话、Reborn2.4 和两份世界书进一步审查，并研究等待反馈和原生 PDF 输入；此次暂不实施新功能。文档及本地 Git 记录沿用既有授权。
+
+### 输入、基线与证据边界
+
+- 起点分支 codex/vertex-gemini-investigation，HEAD=957058def；思考修复 6defa99ca。已跟踪文件干净，仅用户原有 `_claude/` 未跟踪。
+- 新启动/生成附件共 294 行，7 条 `[Vertex HTTP/2]` 摘要；旧对话附件约 1.07 MB、8888 行。只取技术证据，不把附件正文、项目标识、聊天或世界书内容复制进 Git。附件里的历史命令/提示词视为分析材料，不当作本轮指令执行。
+- `_claude/Reborn2.4.json` 与 data/default-user/OpenAI Settings/Reborn2.4.json 完全相同。settings.json 保存的选用预设也是 Reborn2.4；stream_openai=true、function_calling=true、show_thoughts=true、reasoning_effort=high、tool_reasoning_mode=disabled。SPreset 关键配置相同；最初 JSON.stringify 比较提示 RegexBinding 差异，经字段排序后逐项核对，内容和排列均相同，仅属性序列化顺序不同。
+- 本轮 Chrome DevTools 连接仅暴露 about:blank，未检查用户正在使用的真实浏览器页，也没有刷新/打开一个新酒馆页面。以下预设运行机制来自本地保存配置、公开加载脚本及隔离执行；不能据此声称已核实当时页面加载的脚本版本、DOM 或实际收包内容。
+
+### A. 实机生成结果：当前稳定性的证据已明显增强
+
+以下时长从请求开始计；“首数据”是上游原始字节到达时间，不等于首文字或首思考摘要。
+
+| 请求顺序 | 首数据（秒） | 总时长（秒） | 接收 KiB | PING / ACK | 结束 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 5.413 | 454.058 | 104.1 | 13 / 13 | eof，HTTP 200，rstCode=0 |
+| 2 | 7.616 | 677.080 | 180.1 | 20 / 20 | eof，HTTP 200，rstCode=0 |
+| 3 | 7.000 | 310.599 | 84.8 | 8 / 8 | eof，HTTP 200，rstCode=0 |
+| 4 | 未收到 | 4.790 | 0 | 0 / 0 | cancelled / AbortError |
+| 5 | 7.514 | 146.349 | 5.1 | 3 / 3 | cancelled / AbortError |
+| 6 | 166.585 | 393.197 | 58.6 | 11 / 11 | eof，HTTP 200，rstCode=0 |
+| 7 | 5.915 | 557.357 | 153.5 | 17 / 17 | eof，HTTP 200，rstCode=0 |
+
+- 5 次传输正常结束与用户报告的实际生成成功一致；2 次取消与用户手动停止一致。没有新的 ECONNRESET、error outcome 或 GOAWAY 错误记录。7 次总计 72 次 PING、72 次 ACK。最长正常请求约 11 分 17 秒，且有一次等待约 2 分 47 秒才收到首数据后仍成功。
+- 两次取消的 rstCode=2 不能单独解释为 Google 拒绝：src/vertex-http2.js:114-119 在本地 abort 时用 destroy(error) 清理流，诊断 outcome=cancelled / code=AbortError 才是本次分类依据。没有为“把数字改好看”改变取消路径。
+- 全部摘要均含 includeThoughts=true、thinkingLevel=HIGH，说明修复后的参数确实用于这批实际请求。仍不能凭参数或耗时反推精确内部思考 token 数。
+- route=direct 表示应用未使用显式 CONNECT 代理，不表示绕过系统 TUN。
+- 这是当前版本在用户实际生成场景连续成功的证据，强于上一轮仅本机模拟；不是对所有网络条件的保证，也不是 15/30/45 秒策略的受控 A/B。传输 eof 本身不验证 finishReason；本轮成功结论同时引用用户的结果确认。
+
+### B. 对照旧对话：不重新引入已经删掉的复杂实现
+
+- 旧对话记录过 15 秒无条件 PING，后改成 45 秒空闲 PING 且连续静默最多 2 次；另有特定线路下 TLS 1.3 解密错误、TLS 1.2 规避、工具片段组装、SSE 行尾兼容和语义结束检测等多次变动。这些属于旧仓库历史，当前没有相同代码，不能逐项当作当前故障。
+- 当前 30 秒空闲策略的区别不只是频率：等待期间可继续保活到请求结束，限制的是“同时一个未确认 PING”，不是“整个长等待只发两次”。旧策略停止 PING 后可能留下很长无保活窗口；这能解释两种设计的覆盖差异，不能单凭跨版本日志断言全部改善都由这一个变化造成。
+- 旧对话对 too_many_pings 曾明确区分协议可能性与现场证明；当前这批数据没有该信号。没有理由因为总计 72 次 PING 就认定过密，也不据此重新强制 TLS 1.2 或限制总 PING 数。
+- 旧 CRLF 空白复现对应 linux_1.3 自带 SSE 解析器；本次 Reborn2.4/SPreset 在酒馆完成 SSE 解析后接管生成器。两条前端路径不同，不能直接恢复旧全局行尾改写或把旧空白结论套到本次成功结果。
+- 复核当前 src/vertex-http2.js:94-102、221、304：Transform 每块原样 callback，pipeline 流式转发并等待结束，没有收集完整正文再一次返回。对“当前 HTTP/2 改动把全部内容攒到最后”的解释，未发现代码依据。
+
+### C. 为什么工具正文末尾才显示；为什么原生思考仍需补证据
+
+**确定的工具显示路径**
+
+- 预设绑定一个 game_content 工具，必填 content:string，启用 OutputPreprocessing.enabled=true、consumeToolCalls=true，toolCallFormatter.enabled=false；ForcedPostProcessing=merge_tools。
+- 预设通过 tavern_helper 加载公开脚本 `https://jnai2d9kgnbs6xzx5c.com/regex_bind/inject.js`。本轮下载仅作源码分析，没有在浏览器安装或执行整份脚本。快照 228965 bytes / 5693 行，SHA256=c30bca1e9bcbadf1837e61b71884244d066b3bfac763ef82f913e1046a2ad427；这个 URL 未固定版本，浏览器缓存/未来更新可能不同。
+- 当前公开脚本 wrapSPresetOutputGenerator:1359-1449 每块保留 `...sourcePacket`，但 consumeToolCalls 时将下游 toolCalls 置为空，并保留累积工具调用引用；直到原生成器结束后的 :1408-1417 才将参数转换成正文，再 yield 最后一块。因此即便工具结果稍早到达，预设仍在本轮结束后交付其正文。这是源码明确的接管语义。
+- 原生请求没有开启 streamFunctionCallArguments；默认完整工具参数还可能在模型生成完该参数后才返回。因此这里存在“上游完整参数等待”和“前端 EOF 后消费”两层延迟，不能通过缩短 PING 改成逐字显示。
+- 工具包裹改变的是输出协议和消费方式，不提供无限输出或绝不截断的保证。当前仍受输出限额、模型/网络结束和前端解析约束；保留用户现有工作流，不把它擅自改成普通正文输出。
+
+**原生思考是独立通道**
+
+- public/scripts/openai.js:3237 从 thought part 写入 state.reasoning；public/script.js:3892 每包交给 ReasoningHandler。SPreset 包装器保留 state，未把它放进正文缓冲。
+- 本轮用实际公开包装函数、实际预设输出处理函数和合成输入隔离执行：第一包原生思考在上游 EOF 前已传出；第二包工具参数仍不显示正文；上游结束后第三包才交付工具正文。另验证普通文本在 final=false 时能立即通过预设处理器，Unicode/标签的少量 hold 不是整篇缓冲。
+- Google 提供的原生 thought summaries，与正文中的 think_nya/report_nya 标签不是同一种数据。预设针对标签的隐藏/折叠正则不能被直接解释为关闭原生 thought 流。tool_reasoning_mode=disabled 在当前核心里用于工具历史思考回传，不等同于 show_thoughts=false。
+- 保存设置中 reasoning.auto_expand=false；这能使已有思考栏保持折叠，但不能证明思考没收到，也不能解释上游不返回思考。show_hidden=false 也不等于隐藏全部已有摘要。
+- 新日志只有 firstDataMs/bytes，没有 thoughtParts、firstThoughtMs、toolParts 或 usage。第一批字节可能只是元数据/签名等；**当前无法确定这几次是否提前收到了非空原生思考摘要**。不能声称“原生思考一定被 SPreset 吞掉”，也不能保证打开 includeThoughts 就必有及时摘要。[Google 思考文档](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking)说明摘要可能缺失，签名应独立保留。
+
+**已复现但尚未归因到这批请求的核心边界缺陷**
+
+public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选事件的首个 thought part。隔离执行生产 getStreamingReply 确认：
+
+- 单一 thought text=A：正常得到 A。
+- 同一事件 thought text=A、thought text=B：只得到 A，B 丢失。
+- 同一事件首 thought part 只有签名、第二个有 text=B：得到空思考。
+
+正文 :3246 同样只取第一个非 thought part，也有多 part 边界。这是既有前端代码问题，本轮没有改；当前没有真实事件形状证据证明用户这几次触发了它。修复可作为独立小提交，不应与 HTTP/2 或工具分片重写混在一起。
+
+### D. 世界书和预设体积的判断
+
+| 文件 | 保存条目与开关 | 大小含义 |
+| --- | --- | --- |
+| Reborn2.4.json | 67 个 prompt 定义；有效角色顺序中启用 37 项，静态 content 合计 5748 字符 | 约 445KB 文件包含大量界面/正则/脚本内容，不等于同量模型输入；不包含动态宏、角色、历史、实际世界书注入后的完整请求 |
+| 鞋袜图鉴及气味.json | 45 项均未禁用，其中 1 项 constant；总 content 25046 字符，constant 项 1571 字符 | 其余 44 项仍须满足触发/概率/预算等条件，不能按“45 项全开”断言每轮全部注入 |
+| TK要素特化世界书 【主体】【中文】v_1.64.json | 104 项中仅 4 项启用，均 constant；启用 content 合计 794 字符 | 大部分文件内容处于禁用状态，不能用 JSON 文件大小归因等待时间 |
+
+两份世界书启用条目未发现直接操纵 fetch、includeThoughts 或工具流开关的代码特征；本轮未审阅/改写其角色文本。它们可能通过实际注入量影响推理工作，但缺少本次 token 与激活条目记录，不能量化贡献。保留当前世界书配置。
+
+### E. 日志和等待体验的建议顺序（尚未实施）
+
+1. **保留现有传输参数与简洁默认日志。** 当前有效，不建议为“看到动静”重新修改网络、恢复大段原文日志或伪造思考输出。
+2. **优先加可选的轻量语义统计。** 用与传输分离的、容量有界的 SSE 观察器记录 firstThoughtMs、thoughtChars/parts、firstToolMs、toolParts、finishReason、usage 以及最大静默时间；只记元数据、绝不重写正文，不以“无 text”判空，不自动重试。观察器解析失败仅记录诊断失败，不能损害正常转发。LF/CRLF/CR、UTF-8 拆块、大工具参数和异常 EOF 都需独立测试。传输 eof 与语义完成分别记录。
+3. **等待状态只反映已知事实。** 可选每 60 秒输出一行“等待响应头/已收到数据/距离上次数据多久/PING ACK”，结束仍保留一条汇总；不每次 PING 刷屏，不将连接 ACK 描述为模型一定正在生成。若要网页实时状态，走明确状态通道/已有 UI，不能向 Google SSE 注入伪候选或伪思考。
+4. **原生思考显示优先于工具参数分片。** 先区分接口没给摘要、核心提取遗漏、已收到但折叠/主题隐藏。多 thought parts 修复可以小范围进行；工具仍完整交付，避免影响当前稳定性。
+5. **暂缓工具参数流式。** 官方 streamFunctionCallArguments 会带来 partialArgs/willContinue，不是加一个 stream=true 就结束；当前 ToolManager.parseToolCalls:534-552 不按同一个调用重组这些碎片，SPreset 又在 EOF 后消费。若将来实现，必须同时定义调用 ID/参数路径重组、完成判定、取消时的部分展示与“不执行半成品工具”、签名、转义、并行调用、错误处理；作为独立项目验收。[Google 工具流式说明](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/tools/function-calling)。
+
+### F. PDF 原生输入：当前链路与可实施方案
+
+**当前已确认的转换链**
+
+1. public/scripts/chats.js:86 注册 application/pdf → extractTextFromPDF。
+2. public/scripts/utils.js:2029 用 PDF.js 的 page.getTextContent() 获取文字并拼接；没有把页面图像/图表保留成 PDF 输入。
+3. chats.js:198 的聊天附件与 :1691 的资料库上传均将转换结果存为 .txt；:508 appendFileContent 将文字追加进消息。旧已转成文本的附件，不能凭文本还原 PDF，未来启用原生方式时需要原文件。
+4. public/scripts/constants.js:103 仅将 image/video/audio 识别为媒体，PDF 不进入媒体路径；openai.js:935-980 也只有三种媒体添加方法。
+5. src/prompt-converters.js:432 的 Google 转换器只消费 text/tool/image_url/video_url/audio_url，没有独立文件 part。合成探针验证 `{type:'file',...}` 会被忽略；现有 addDataUrlPart 的编码能力虽可处理 PDF MIME，但不能把 PDF 假装图片作为正式集成方案，前端图片处理/尺寸读取会有不匹配。
+
+因此需要贯通上传、存储、消息历史、提示词后处理和供应商适配，单独跳过文字提取会留下错误格式或丢附件。
+
+**Google 能力和接口边界**
+
+- Vertex/当前 Argon 支持 PDF。官方当前文档列出 Argon PDF 每文件最多 3000 页、API/Cloud Storage 每 PDF 50MB；这是模型/入口约束，不等于所有代理、编码后请求和多个文件总量都可无条件通过。公网 HTTP 文件 URI 在同一文档另有 15MB 限制，不能混用上限。[文档理解](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/document-understanding)。
+- 可用 `contents[].parts[].inlineData={mimeType:'application/pdf',data:<base64>}` 直接随生成请求传完整 PDF；或通过 fileData 引用 Google 可读取的 Cloud Storage URI。localhost、酒馆私有附件 URL、D: 路径不能直接给 Google 读取。[REST inlineData 说明](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/image-understanding)。
+- Gemini Developer API/AI Studio 的 Files API 与 Vertex 是不同通道。官方 JS SDK 明确 files.upload 不支持 Vertex；不能把 AI Studio 的上传 ID/接口原样套用现有服务账户链路。[Google SDK Files](https://googleapis.github.io/js-genai/release_docs/classes/files.Files.html)。
+- 本地上传仍建议经酒馆后端持有凭据；“直接传 PDF”指不先转文本/图片，不意味着把服务账户凭据放入浏览器直连 Google。PDF 带来页面视觉内容，实际模型输入与耗时可能增加，不承诺一定更快。
+
+**建议的第一阶段实现（待未来授权）**
+
+1. 附件明确选择“提取文本”或“原文件发送”；保留现有文本路径兼容资料库/RAG。原生方式保存完整原文件，记录 MIME、原始大小、哈希和用户目录内的文件引用，不将 Base64 永久写入聊天 JSON。
+2. 消息历史保存文档引用，按该轮实际选入上下文的消息附带文件；重载、编辑、删除、续聊均保持归属关系。提供商不支持时明确提示选择文字方式，不静默漏传、双重发送或上传后自动切模式重发。
+3. Google 请求转换新增文档类型，后端只读取当前用户目录中已验证的附件，在文本后处理完成后仍按原消息关系组装 inlineData。避免多媒体被字符串化，不允许把文档标识解释为任意文件系统路径。
+4. 注意当前预设 ChatSquash.squashed_post_script 的 contentToText 会丢掉非文本 part。实际合成调用已复现文件引用丢失；但 ChatSquash.enabled=false、conditional_enabled=true，启用的静态 prompt 没有 merge 标记，**不能说当前会话已触发这个问题**。未来 PDF 设计必须覆盖条件脚本开启时的保留路径，不能只验证裸核心。
+5. 第一版以原生 Vertex 小型 PDF inlineData 为重点，不引入新云存储服务。大文件/反复引用的 GCS、AI Studio Files API、其他供应商文件协议分别适配，能力判断按端点+模型，不笼统认为所有 OpenAI-compatible 地址都能收文件。
+6. 限制按编码后请求体/文件数/页数/模型上下文分别检查；Base64 约膨胀三分之一，Node 请求 JSON 序列化也占内存。不能把本机 500MB Express body 限额当作 Google 允许的输入限额。PDF token 估算应明确不确定，避免按 Base64 字符串当普通文本计数。
+
+验收先用本机合成 PDF（文字、扫描页、图表、中文文件名、多个附件、受密码保护/损坏/超限）核对实际生成请求、原字节哈希、取消与重载、用户目录隔离、预设后处理及模型切换；随后仅在另行明确授权的少量真实请求上验证 Google 阅读结果。本轮没有上传 PDF 或生成请求。
+
+### G. 启动日志中的 Git 提示
+
+`There is no tracking information for the current branch` 是调查分支未配置 upstream，和 Vertex 断连/生成无关。本地 release 跟踪 origin/release；codex 分支保留独立修复。
+
+当前 UpdateAndStart.bat:15 执行 git pull --rebase --autostash，失败时退出更新流程；Start.bat 仅安装现有生产依赖并启动。因此建议日常使用 Start.bat，更新官方代码时另行评估合并/变基并验证本地修复。本轮未设置 upstream、拉取、变基或修改启动器，也没有为了消掉提示把调查分支无审核地绑定自动更新。
+
+### H. 本轮验证、实际文件变动与下一步
+
+- 复跑已有 vertex-http2.test.js、vertex-endpoint.test.js、google-request.test.js：**3 套件，67 项通过，1 项可选 65 秒慢测试跳过**；约 4.21 秒。没有重新宣称全套 486 项在本轮执行，也没有发起 Google 模型生成。
+- 新的只读隔离探针：实际 SPreset 包装器+预设处理器确认思考提前传递/工具 EOF 后显示/普通文本及时通过；生产 getStreamingReply 复现多思考 part 遗漏；生产 convertGooglePrompt 复现专门文件 part 尚不支持；预设条件脚本被调用时复现非文本 part 丢失。全部使用合成输入，不写聊天、不运行整份插件安装代码。
+- 公开脚本临时快照原先写入沙箱临时目录，后续工具调用的临时目录不持久，读取失败；改在现有 ignored tests/node_modules 中暂存只读源码，审查结束删除该单一临时文件。未新增依赖或修改锁文件。
+- 本轮唯一持久修改是本统一日志，采用独立 docs 提交；不修改生产/测试源码、AGENTS.md、配置、预设、世界书或原有 _claude，不推送远端。
+- 决策：**维持当前稳定实现；保留参数 30 秒/HIGH/工具模式。将可选语义诊断及原生思考提取作为最小后续方向，将 PDF 原文件输入独立规划，暂缓工具参数分片。** 等用户未来明确选择实施范围再动生产代码，不在本轮追加确认或自动实施。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
