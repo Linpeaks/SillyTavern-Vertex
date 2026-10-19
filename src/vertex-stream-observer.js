@@ -71,7 +71,7 @@ export function createVertexStreamObserver(maxEventChars = 1024 * 1024) {
                 if (character === '\r' || character === '\n') endLine(elapsedMs);
                 else if (line.length <= maxEventChars) {
                     line += character;
-                    if (line.length > maxEventChars) { dropping = true; data = []; }
+                    if (line.length + size > maxEventChars) { dropping = true; data = []; }
                 }
             }
         },
