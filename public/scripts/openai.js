@@ -3229,21 +3229,21 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
         }
         return data?.delta?.text || '';
     } else if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(chat_completion_source)) {
+        const parts = data?.candidates?.[0]?.content?.parts || [];
         const inlineData = data?.candidates?.[0]?.content?.parts?.filter(x => x.inlineData && !x.thought)?.map(x => x.inlineData) || [];
         if (Array.isArray(inlineData) && inlineData.length > 0) {
             state.images.push(...inlineData.map(x => `data:${x.mimeType};base64,${x.data}`).filter(isDataURL));
         }
         if (show_thoughts) {
-            state.reasoning += (data?.candidates?.[0]?.content?.parts?.filter(x => x.thought)?.map(x => x.text)?.[0] || '');
+            state.reasoning += parts.filter(x => x.thought && typeof x.text === 'string').map(x => x.text).join('');
         }
         // Extract thought signatures from streaming chunks (typically in final chunk)
-        const parts = data?.candidates?.[0]?.content?.parts || [];
         parts.forEach((part) => {
             if (part.thoughtSignature && typeof part.text === 'string') {
                 state.signature = part.thoughtSignature;
             }
         });
-        return data?.candidates?.[0]?.content?.parts?.filter(x => !x.thought)?.map(x => x.text)?.[0] || '';
+        return parts.filter(x => !x.thought && typeof x.text === 'string').map(x => x.text).join('');
     } else if (chat_completion_source === chat_completion_sources.COHERE) {
         return data?.delta?.message?.content?.text || data?.delta?.message?.tool_plan || '';
     } else if (chat_completion_source === chat_completion_sources.DEEPSEEK) {
