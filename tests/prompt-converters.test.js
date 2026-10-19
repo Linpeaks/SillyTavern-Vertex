@@ -1,3 +1,4 @@
+/* eslint-disable playwright/no-standalone-expect -- Jest test.each is not a Playwright test. */
 import { describe, test, expect, jest, beforeAll } from '@jest/globals';
 
 jest.unstable_mockModule('../src/util.js', () => ({

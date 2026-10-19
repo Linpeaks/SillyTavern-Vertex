@@ -38,6 +38,8 @@ async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, 
         getPromptNames: () => ({ charName: '', userName: '', groupNames: [], startsWithGroupName: () => false }),
         console: { debug() {}, info() {}, warn() {}, error: (...args) => { throw new Error(util.format(...args)); } },
         fetch: fetchMock,
+        getVertexHttp2Proxy: async () => '',
+        fetchVertexHttp2: fetchMock,
     });
     vm.runInContext(handlerSource, context);
     const request = {
@@ -51,15 +53,16 @@ async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, 
         user: { directories: {} },
         socket: new EventEmitter(),
     };
-    const response = {
+    const response = Object.assign(new EventEmitter(), {
         headersSent: false, statusCode: 200,
         status(value) { this.statusCode = value; return this; },
         send(value) { this.value = value; return this; },
-    };
+    });
     await context.sendMakerSuiteRequest(request, response);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(response.statusCode).toBe(200);
     expect(response.value.error).toBeUndefined();
+    expect(response.listenerCount('close')).toBe(0);
     return { body: JSON.parse(fetchMock.mock.calls[0][1].body), response };
 }
 

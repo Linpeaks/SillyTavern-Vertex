@@ -232,6 +232,106 @@ git diff 06bde939fb1e9c4c8d8641d810f0a916b5bce127 -- src public tests package.js
 - AGENTS.md 更新当前已授权范围，后续继续按问题记录和提交。
 - 本阶段以独立思考修复提交保存。下一阶段实现 Vertex 专用 HTTP/2 传输、取消/清理与脱敏诊断；不自动重试、不启用工具参数分片、不还原旧仓库复杂补丁。
 
+## 002B · 2026-10-19（Asia/Shanghai）· 原生 Vertex 保活、生命周期与最终验证
+
+状态：本轮授权的思考等级与连接保活优化已实现并完成本地验证，分开提交；没有重启用户服务，也没有调用真实模型生成。002A 的独立思考修复提交为 `6defa99ca`。001 中的“待确认”是历史状态，以本轮授权和实施记录为准。
+
+### 实施范围与取舍
+
+- 新附件证实短非流式成功与长工具流式失败并存，且两种请求都缺失 thinkingConfig。因此分别修复确定的参数遗漏和长期静默时的传输薄弱点，不把短请求成功解释为长请求网络正常，也不宣称已经定位具体断开设备。
+- 新增单一传输模块 `src/vertex-http2.js`，只接入原生 Vertex。每次生成独立持有一个 HTTP/2 session 和一个请求，不设置生成正文的固定读取超时；仅 CONNECT/TLS/HTTP/2 建连阶段设置 30 秒超时。
+- 默认上游静默 30000ms 后发送标准 HTTP/2 PING，收到数据则重新计算静默时间；首块之后再次静默也覆盖，持续数据流不额外 PING。同时最多一个待 ACK 的 PING，错误仅记录，不作为重交生成的依据。PING 不写入 SSE 正文。
+- 保留 TLS 主机名和证书验证、URL query（包括 alt=sse）、原始响应字节及背压。工具调用参数、thoughtSignature、LF/CRLF 均原样透传；未引入行尾重写、工具参数分片重组或“空回复补发”。
+- 复用现有 ProxyAgent 的代理/bypass 决策；HTTP/HTTPS 显式代理用 CONNECT，代理认证只发给代理。SOCKS/PAC、自定义 Agent/连接策略、私网过滤器及不适用端点在提交生成前选择原 node-fetch，不静默绕过。关闭开关也选择原路径并记录提示。已发送后的 ALPN、TLS、代理、GOAWAY、RST 或流错误不会切换协议补发。
+- 取消监听绑定当前浏览器响应，覆盖建连、等待响应头和已开始响应；保留其他 socket 监听。新增转发函数等待真实流结束，再做清理，避免旧 `forwardFetchResponse()` 返回早于流完成而导致的集成截断风险。
+- 正常结束关闭 session；异常/取消销毁请求、连接和响应流，移除本模块定时器及 abort 监听。非正常上游中断传递为下游连接错误，不伪装成正常部分完成。成功 GOAWAY 允许已接受的请求完成，拒绝当前请求或错误 GOAWAY 则失败。
+- 不调整当前 HIGH、65535、预设、工具执行方式、代理节点、Node 版本或 API 版本。思考修复后 HIGH 会实际生效，耗时可能增加；等级不是固定 token 数或完成时限，PING 也不能突破 Google 的服务端执行时限。
+
+### 实际修改文件及原因
+
+| 文件 | 修改与原因 |
+| --- | --- |
+| src/vertex-http2.js | 新增专用 HTTP/2 单次 POST、空闲 PING、代理选择/CONNECT、生命周期和脱敏诊断；新增等待流真正结束的转发函数 |
+| src/endpoints/backends/chat-completions.js | 原生 Vertex 接入新模块；按请求绑定取消；等待实际转发结束后清理；保留回退路径；原生请求/响应日志只输出元数据 |
+| default/config.yaml | 记录 gemini.vertexHttp2.enabled=true 与 pingIntervalMs=30000 默认项；实际用户 config.yaml 未修改，缺省值由代码提供 |
+| tests/vertex-http2.test.js | 本机 TLS HTTP/2、CONNECT、故障注入、保活、背压、并发及清理验证；可选真实 65 秒等待测试 |
+| tests/vertex-endpoint.test.js | 本机 HTTP 客户端 → Express → 从源码提取的完整生产 handler → 真实新传输模块 → 本机 TLS 服务；验证集成、取消、断流、请求参数与日志脱敏 |
+| tests/fixtures/vertex-http2/cert.pem、key.pem、README.md | 公开的合成 localhost 测试证书与配套密钥，专为回环测试生成，不是用户凭据；测试显式信任此证书，生产校验保持启用 |
+| tests/google-request.test.js | 适配生产 handler 新传输接口与响应 close 事件，保留思考等级和纯工具回归覆盖 |
+| tests/prompt-converters.test.js | 仅增加说明性的 ESLint 指令，避免 Playwright 规则误识别 Jest test.each；本阶段未再改思考映射实现 |
+| VERTEX_GEMINI_INVESTIGATION_LOG.md | 汇总本轮实现、测试、限度、Git 与启用/回退方式 |
+
+仅使用 Node 内置 http2/tls/stream 及现有 proxy-agent/node-fetch，未新增生产依赖。测试使用现有 lock 安装 tests/node_modules，并临时安装仓库 ESLint 所需插件（--no-save --package-lock=false）；根目录与 tests 的 package.json/package-lock.json 均无变更。
+
+### 验证结果与证据等级
+
+| 验证 | 实测结果 | 能证明什么 / 不能证明什么 |
+| --- | --- | --- |
+| Argon 请求矩阵 | 002A：2 套件、184 项通过；Vertex/AI Studio 两种构造、六等级、thoughts 开关，以及旧模型、未知模型、纯工具回复 | 修复真实生产请求构造；不是 Google 内部计算量或真实浏览器插件验证 |
+| 本机传输与端点测试 | 响应前静默、首块后静默、持续数据、120k Unicode 工具正文、1MB 背压、CRLF 字节保持、签名、HTTP 错误、TLS/ALPN、CONNECT/认证、取消、RST、GOAWAY、PING 未 ACK/失败、六请求并发、回退路径与日志脱敏通过 | 可控服务上的真实 socket/stream 生命周期；不是用户 TUN 故障因果复现 |
+| 完整单元套件（启用慢测试） | 22 套件，486 项全部通过，约 71.72 秒 | 包括默认 30 秒间隔下真实 65 秒响应头前等待：单个 POST、两次 PING、两次 ACK、完整返回、session 清理 |
+| 最终兼容性/日志调整后的完整常规回归 | 22 套件，485 项通过，1 项慢测试按默认设置跳过，约 7.90 秒 | 最后补充的自定义 TLS/DNS/连接 Agent 回退与诊断请求 ID/模型/等级关联也通过；没有声称最后这次再次执行慢测试 |
+| ESLint | 对所有变更 JS 使用仓库实际配置，退出码 0 | 静态检查通过；Playwright 误识别 Jest test.each 仅在对应测试文件加有原因的局部规则说明 |
+| 当前网络 Google 非生成探测 | 用新生产模块向 https://aiplatform.googleapis.com/ 发一次无凭据根路径 POST：HTTP 404，1561 bytes，连接约 480ms、响应头约 1219ms、末数据约 1221ms，eof/rstCode=0 | 当前网络可通过新模块完成 Google TLS/HTTP/2 请求；不是模型生成，不验证长 TUN 稳定性、付费鉴权或真实工具展示 |
+| Git/范围核对 | diff --check 通过；用户配置、data、public、扩展、依赖清单与锁文件均未纳入更改；只暂存明确清单 | 保留用户原有未跟踪 _claude/；不将其正文或凭据加入日志/提交 |
+
+本轮助手发起真实模型生成次数：**0**。未执行 Playwright 浏览器套件，未启动/重启酒馆，未声称真实预设长正文已经端到端通过。
+
+主要复现命令（PowerShell，测试在 tests/ 目录运行）：
+
+~~~powershell
+# 常规完整单元测试
+node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.json --runInBand --verbose=false --silent
+
+# 可选：含真实 65 秒等待的完整套件；不会调用 Google
+$env:VERTEX_LONG_IDLE_TEST='1'
+node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.json --runInBand --verbose=false
+Remove-Item Env:VERTEX_LONG_IDLE_TEST
+~~~
+
+仓库根目录静态检查：
+
+~~~powershell
+node tests/node_modules/eslint/bin/eslint.js --resolve-plugins-relative-to ./tests src/vertex-http2.js src/prompt-converters.js src/endpoints/backends/chat-completions.js tests/vertex-http2.test.js tests/vertex-endpoint.test.js tests/google-request.test.js tests/prompt-converters.test.js
+git diff --check
+~~~
+
+### 测试中出现的问题及处理原因
+
+- 初次 ALPN 负例期望特定错误，但本机 Node/TLS 在握手阶段直接报 ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL；调整测试接受正确的握手拒绝，同时断言没有 POST，没有降低校验或自动回退。
+- 初次 RST 模拟用服务端 stream.close(code)，Node 26 的实际事件顺序包含正常 END_STREAM，客户端看到 rstCode=0/eof。用原生事件探针确认后改成 stream.destroy(error) 产生真实错误复位，客户端正确拒绝；这是测试注入方法问题，不能据此认定真实上游 RST 被生产模块吞掉。
+- 初次端点清理断言要求 close 监听总数为 0，但 Node pipeline 自身保留内部监听；调整为只核对本 handler 安装的 onResponseClose 已移除，并等待上游 session 关闭。未用 removeAllListeners 破坏其他监听。
+- Jest/ESLint 在沙箱内受到 realpath 文件访问限制，通过工具权限提升运行本地测试；这不是业务断言失败或自动审批拒绝。没有为此修改用户系统配置。
+- 旧仓库记忆仅用于提醒 CRLF、纯工具正文和中途静默等回归边界；当前实现未恢复旧补丁，也未借旧代码归因当前失败。
+
+### 诊断解释、启用与回退
+
+重启当前工作区的 SillyTavern 后，新代码及默认配置生效。无需修改已保存预设或重新输入密钥。默认有效参数可在原生请求元数据日志中看到：Argon High 为 thinkingLevel: HIGH；Auto 不显式指定等级，显示思考由 includeThoughts 独立控制。
+
+每次新传输完成、失败或取消时输出一条 `[Vertex HTTP/2]` 摘要，包含 id、model、stream、thinkingConfig、maxOutputTokens、route、phase、connectMs、headersMs、firstDataMs、lastDataMs、bytes、pingsSent、pingsAck、elapsedMs、rstCode、outcome，以及有事件时的错误 code/goawayCode/pingError。route 仅是 direct/http:/https:，不打印代理地址、密钥、提示词、工具正文或签名。direct 表示未使用应用显式代理，仍可能经过用户 TUN。
+
+- headersMs=null、bytes=0：未收到响应头；先看 connectMs、code、PING/ACK。
+- headersMs 有值且 bytes>0 后失败：已经进入响应；结合末数据时间与总时长判断静默窗口。
+- outcome=eof 仅表示传输正常 EOF，**不保证模型已经给出 finishReason 或完整语义结果**。本次未加入 SSE 语义解析器，服务端以正常 END_STREAM 结束但缺少最终结果仍是另一个待实际证据判断的问题。
+- outcome=cancelled 对应浏览器/用户取消；错误不会触发重新生成。PING ACK 证明协议连接可应答，不证明模型正在产出，也不保证每一层代理会延长应用超时。
+
+需要暂时关闭新传输时，在用户 config.yaml **已有 gemini 节点中**加入下面子项，再重启；不要重复创建第二个 gemini 节点。这样后续手动请求回到 node-fetch，思考等级修复仍保留。实际文件本轮未替用户改动。
+
+~~~yaml
+gemini:
+  vertexHttp2:
+    enabled: false
+    pingIntervalMs: 30000
+~~~
+
+### Git 与下一步
+
+- 分支：`codex/vertex-gemini-investigation`；基线 `dc2d6b1f5`；思考修复 `6defa99ca`。
+- 本条随第二个独立实现提交 `fix: keep native Vertex generations alive over HTTP2` 保存。可用 `git log --oneline -3` 或按本日志文件查询确切 SHA；不为自引用 SHA 追加噪声提交。
+- 本地 Git 采用明确文件清单暂存，提交前执行 staged diff --check；不推送远端。用户原有 `_claude/` 仍未跟踪，未修改、未暂存。
+- 后续回滚优先 `git revert <对应实现提交SHA>`。仅需停用保活可先用上述配置开关；思考修复和连接修复可分别定位。
+- 下一步是用户重启后的一次正常长工具正文使用，检查新元数据；如果仍失败，用实际 headersMs/lastDataMs/PING/错误分类继续单变量调查。真实 TUN 长等待、浏览器预设最终展示、Google 计算量及 15/30 秒链路对照均尚未验证，不把本地测试描述为全部网络问题已根治。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

@@ -376,6 +376,12 @@ claude:
   enableAdaptiveThinking: false
 # -- GOOGLE GEMINI API CONFIGURATION --
 gemini:
+  # Native Vertex only. Disable to restore node-fetch for subsequent requests.
+  # Keeps long thinking/tool waits active without replaying a generation.
+  vertexHttp2:
+    enabled: true
+    # PING only while the upstream response is idle; not a generation timeout.
+    pingIntervalMs: 30000
   # API endpoint version ("v1beta" or "v1alpha")
   apiVersion: 'v1beta'
   # Adds thought signatures to requests (if available). Only for Gemini 3 and above.

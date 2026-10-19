@@ -69,6 +69,7 @@ import {
 import { getVertexAIAuth, getProjectIdFromServiceAccount } from '../google.js';
 import { getCookieSecret } from '../../users.js';
 import { fetchGoogleModels, GoogleModelsHttpError } from './google-models.js';
+import { fetchVertexHttp2, forwardVertexResponse, getVertexHttp2Proxy } from '../../vertex-http2.js';
 
 const API_OPENAI = 'https://api.openai.com/v1';
 const API_CLAUDE = 'https://api.anthropic.com/v1';
@@ -667,15 +668,28 @@ async function sendMakerSuiteRequest(request, response) {
     }
 
     const body = getGeminiBody();
-    console.debug(`${apiName} request:`, body);
+    const nativeVertex = useVertexAi && authType !== 'proxy';
+    console.debug(`${apiName} request:`, nativeVertex ? {
+        model, stream, thinkingConfig: body.generationConfig.thinkingConfig,
+        maxOutputTokens: body.generationConfig.maxOutputTokens,
+        messages: body.contents.length, tools: body.tools?.length || 0,
+    } : body);
 
-    try {
-        const controller = new AbortController();
+    const controller = new AbortController();
+    const onResponseClose = () => {
+        if (!response.writableFinished) controller.abort();
+    };
+    if (nativeVertex) {
+        response.once('close', onResponseClose);
+        if (response.destroyed) controller.abort();
+    } else {
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
             controller.abort();
         });
+    }
 
+    try {
         const apiVersion = getConfigValue('gemini.apiVersion', 'v1beta');
         const responseType = (stream ? 'streamGenerateContent' : 'generateContent');
 
@@ -730,18 +744,35 @@ async function sendMakerSuiteRequest(request, response) {
             url = `${apiUrl.toString().replace(/\/$/, '')}/${apiVersion}/models/${model}:${responseType}?key=${apiKey}${stream ? '&alt=sse' : ''}`;
         }
 
-        const generateResponse = await fetch(url, {
+        const fetchOptions = {
             body: JSON.stringify(body),
             method: 'POST',
             headers: headers,
             signal: controller.signal,
-        });
+        };
+        const proxyUrl = nativeVertex && getConfigValue('gemini.vertexHttp2.enabled', true, 'boolean')
+            ? await getVertexHttp2Proxy(url) : null;
+        if (nativeVertex && proxyUrl === null) {
+            console.info('[Vertex transport] Using node-fetch: HTTP/2 disabled or existing endpoint/agent requires it.');
+        }
+        const generateResponse = proxyUrl !== null
+            ? await fetchVertexHttp2(url, fetchOptions, {
+                proxyUrl,
+                pingIntervalMs: Math.max(1000, getConfigValue('gemini.vertexHttp2.pingIntervalMs', 30000, 'number')),
+                onDiagnostic: summary => console.info('[Vertex HTTP/2]', {
+                    model, stream, thinkingConfig: body.generationConfig.thinkingConfig,
+                    maxOutputTokens: body.generationConfig.maxOutputTokens, ...summary,
+                }),
+            })
+            : await fetch(url, fetchOptions);
 
         if (stream) {
             try {
                 // Pipe remote SSE stream to Express response
-                await forwardFetchResponse(generateResponse, response);
+                if (nativeVertex) await forwardVertexResponse(generateResponse, response);
+                else await forwardFetchResponse(generateResponse, response);
             } catch (error) {
+                if (nativeVertex) throw error;
                 console.error('Error forwarding streaming response:', error);
                 if (!response.headersSent) {
                     return response.status(500).send({ error: true });
@@ -750,7 +781,7 @@ async function sendMakerSuiteRequest(request, response) {
         } else {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
-                console.warn(`${apiName} API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
+                console.warn(`${apiName} API returned error: ${generateResponse.status} ${generateResponse.statusText}`, nativeVertex ? '' : errorText);
                 const errorJson = tryParse(errorText) ?? { error: true };
                 return response.status(500).send(errorJson);
             }
@@ -761,7 +792,7 @@ async function sendMakerSuiteRequest(request, response) {
             const candidates = generateResponseJson?.candidates;
             if (!candidates || candidates.length === 0) {
                 let message = `${apiName} API returned no candidate`;
-                console.warn(message, generateResponseJson);
+                console.warn(message, nativeVertex ? { blockReason: generateResponseJson?.promptFeedback?.blockReason } : generateResponseJson);
                 if (generateResponseJson?.promptFeedback?.blockReason) {
                     message += `\nPrompt was blocked due to : ${generateResponseJson.promptFeedback.blockReason}`;
                 }
@@ -771,12 +802,16 @@ async function sendMakerSuiteRequest(request, response) {
             const responseContent = candidates[0].content ?? candidates[0].output;
             const functionCall = (candidates?.[0]?.content?.parts ?? []).some(part => part.functionCall);
             const inlineData = (candidates?.[0]?.content?.parts ?? []).some(part => part.inlineData);
-            console.debug(`${apiName} response:`, util.inspect(generateResponseJson, { depth: 5, colors: true }));
+            console.debug(`${apiName} response:`, nativeVertex ? {
+                candidates: candidates.length,
+                finishReason: candidates[0].finishReason,
+                usageMetadata: generateResponseJson.usageMetadata,
+            } : util.inspect(generateResponseJson, { depth: 5, colors: true }));
 
             const responseText = typeof responseContent === 'string' ? responseContent : responseContent?.parts?.filter(part => !part.thought)?.map(part => part.text)?.join('\n\n');
             if (!responseText && !functionCall && !inlineData) {
                 let message = `${apiName} Candidate text empty`;
-                console.warn(message, generateResponseJson);
+                console.warn(message, nativeVertex ? { finishReason: candidates[0].finishReason } : generateResponseJson);
                 return response.send({ error: { message } });
             }
 
@@ -785,9 +820,18 @@ async function sendMakerSuiteRequest(request, response) {
             return response.send(reply);
         }
     } catch (error) {
-        console.error(`Error communicating with ${apiName} API:`, error);
-        if (!response.headersSent) {
+        if (nativeVertex && controller.signal.aborted) return;
+        console.error(`Error communicating with ${apiName} API:`, nativeVertex ? { code: error.code || error.name } : error);
+        if (!response.headersSent && !response.destroyed) {
             return response.status(500).send({ error: true });
+        }
+        if (nativeVertex && !response.destroyed) response.destroy();
+    } finally {
+        if (nativeVertex) {
+            response.removeListener('close', onResponseClose);
+            // Native forwarding is awaited through EOF, so cleanup cannot cut it short.
+            // Also release the upstream if response processing itself throws.
+            controller.abort();
         }
     }
 }
