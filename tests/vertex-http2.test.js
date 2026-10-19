@@ -83,6 +83,32 @@ afterEach(async () => {
 });
 
 describe('Vertex HTTP/2 lifecycle', () => {
+    test('observes SSE while preserving bytes and stops optional progress at EOF', async () => {
+        const data = 'data: {"candidates":[{"content":{"parts":[{"thought":true,"text":"secret thought"},{"functionCall":{"args":{"body":"secret tool"}}}]},"finishReason":"STOP"}]}\r\n\r\n';
+        const { url, state } = await target(stream => {
+            stream.respond({ ':status': 200, 'content-type': 'text/event-stream' });
+            later(() => stream.end(data), 100);
+        });
+        const run = request(url, { progressIntervalMs: 20 });
+        expect(await (await run.response).text()).toBe(data);
+        await until(() => run.onDiagnostic.mock.calls.some(([value]) => value.outcome === 'eof'));
+        const summaries = run.onDiagnostic.mock.calls.map(([value]) => value);
+        expect(summaries.some(value => value.outcome === 'progress')).toBe(true);
+        expect(summaries.at(-1)).toMatchObject({ outcome: 'eof', sse: { thoughtParts: 1, toolParts: 1, finishReasons: ['STOP'] } });
+        expect(summaries.at(-1).maxIdleMs).toBeGreaterThanOrEqual(50);
+        expect(JSON.stringify(summaries)).not.toContain('secret');
+        await delay(60);
+        expect(run.onDiagnostic).toHaveBeenCalledTimes(summaries.length);
+        expect(state.requests).toBe(1);
+    });
+
+    test('throwing diagnostic callbacks cannot break a successful response', async () => {
+        const { url } = await target(stream => { stream.respond({ ':status': 200 }); stream.end('body'); });
+        const run = request(url, { onDiagnostic() { throw new Error('diagnostic failure'); } });
+        expect(await (await run.response).text()).toBe('body');
+        await until(() => sessions.size === 0);
+    });
+
     test('keeps waiting before headers, preserves query/body and cleans up', async () => {
         const { url, state } = await target(stream => later(() => {
             stream.respond({ ':status': 200, 'content-type': 'text/event-stream' });

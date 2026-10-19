@@ -472,6 +472,14 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 本机执行新测试及 google-request.test.js：2 套件 28 项通过；没有调用 Google、读取实际聊天或改动用户配置。后续尚需诊断与 PDF 分项实现及最终回归；已有实机稳定性证据见 003，不能由此保证模型一定及时给出摘要。
 - 本分项采用独立 fix 提交；本轮后续记录继续写入此节。
 
+### B. 与内容转发分离的轻量诊断
+
+- A 已提交 0f6273b64。新增 src/vertex-stream-observer.js：只观察 SSE，不改写、过滤或重放；单事件最多缓存 1 Mi 字符，超限跳过并计数，之后继续观察。按 UTF-8、LF/CRLF/CR、多行 data 处理；只记录候选 0 的思考/正文字符数、tool part 数、首次到达、finishReason 和白名单数值 usage，不保存正文、工具名称/参数、签名。字符数为 JavaScript UTF-16 长度，不是 token 数。
+- src/vertex-http2.js 增加 maxIdleMs、SSE 元数据及独立可选进度定时器。现有 PING/ACK、TLS、代理、取消、单次提交和原字节 pipeline 不变；diagnostic 回调异常也不能中断生成。取消/结束清理进度定时器。semanticEnd 只表示观察到结束原因，不能把 MAX_TOKENS 或传输错误描述成成功生成；缺失标记、超限、损坏和不完整事件分别留痕。
+- 后端读取 gemini.vertexHttp2.observeSse（默认 true）和 progressIntervalMs（默认 0，开启时至少 60000ms）。default/config.yaml 说明选项；未修改用户 config.yaml。默认仍只输出结束摘要，进度只描述阶段/已收字节/静默/PING ACK，不声称模型正在思考。
+- 新增观察器测试，扩展 HTTP/2 原字节转发、进度停止、日志回调异常测试。执行 4 套件：75 项通过，1 项既有可选 65 秒慢测试跳过。覆盖 UTF-8 逐字节、三种行尾、多行、超限恢复、损坏及异常 EOF、tool-only、隐私元数据。初次 ESLint 报一个括号格式及 test.each 插件误识别，已定点修正后重跑。没有 Google 生成、实机浏览器或 TUN 新测试。
+- 本分项单独提交；PDF 仍待下一分项，保持可单独回退。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

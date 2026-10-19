@@ -759,6 +759,9 @@ async function sendMakerSuiteRequest(request, response) {
             ? await fetchVertexHttp2(url, fetchOptions, {
                 proxyUrl,
                 pingIntervalMs: Math.max(1000, getConfigValue('gemini.vertexHttp2.pingIntervalMs', 30000, 'number')),
+                observeSse: getConfigValue('gemini.vertexHttp2.observeSse', true, 'boolean'),
+                progressIntervalMs: getConfigValue('gemini.vertexHttp2.progressIntervalMs', 0, 'number') > 0
+                    ? Math.max(60000, getConfigValue('gemini.vertexHttp2.progressIntervalMs', 0, 'number')) : 0,
                 onDiagnostic: summary => console.info('[Vertex HTTP/2]', {
                     model, stream, thinkingConfig: body.generationConfig.thinkingConfig,
                     maxOutputTokens: body.generationConfig.maxOutputTokens, ...summary,

@@ -382,6 +382,10 @@ gemini:
     enabled: true
     # PING only while the upstream response is idle; not a generation timeout.
     pingIntervalMs: 30000
+    # Metadata only: thought/tool arrival, finish reason and usage. Never logs content.
+    observeSse: true
+    # Optional waiting summary (e.g. 60000). Zero keeps the log quiet until completion.
+    progressIntervalMs: 0
   # API endpoint version ("v1beta" or "v1alpha")
   apiVersion: 'v1beta'
   # Adds thought signatures to requests (if available). Only for Gemini 3 and above.

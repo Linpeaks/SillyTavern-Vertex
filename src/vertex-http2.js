@@ -8,6 +8,7 @@ import { Transform, pipeline } from 'node:stream';
 import { pipeline as forward } from 'node:stream/promises';
 import { ProxyAgent } from 'proxy-agent';
 import { AbortError, Response } from 'node-fetch';
+import { createVertexStreamObserver } from './vertex-stream-observer.js';
 
 /**
  * Select HTTP/2 before submitting a generation. null means retain node-fetch
@@ -54,6 +55,8 @@ export async function getVertexHttp2Proxy(endpoint, agent = https.globalAgent) {
  * @param {string} [options.proxyUrl] Empty for direct/TUN routing
  * @param {number} [options.pingIntervalMs]
  * @param {number} [options.connectTimeoutMs]
+ * @param {boolean} [options.observeSse] Collect bounded metadata for SSE responses
+ * @param {number} [options.progressIntervalMs] Optional progress log, zero disables
  * @param {string | Buffer} [options.ca] Additional trust for local TLS tests
  * @param {function(object): void} [options.onDiagnostic] Receives metadata only
  * @returns {Promise<Response>}
@@ -62,6 +65,8 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
     proxyUrl = '',
     pingIntervalMs = 30000,
     connectTimeoutMs = 30000,
+    observeSse = true,
+    progressIntervalMs = 0,
     ca,
     onDiagnostic = summary => console.info('[Vertex HTTP/2]', summary),
 } = {}) {
@@ -81,6 +86,9 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
         let tunnel;
         let pingTimer;
         let setupTimer;
+        let progressTimer;
+        let observer;
+        let observerFailed = false;
         let stopped = false;
         let receivedHeaders = false;
         let pendingPing = false;
@@ -89,15 +97,25 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
         const stats = {
             id: randomUUID(), route: proxyUrl ? new URL(proxyUrl).protocol : 'direct',
             phase: 'connect', headersMs: null, firstDataMs: null, lastDataMs: null,
-            bytes: 0, pingsSent: 0, pingsAck: 0,
+            bytes: 0, pingsSent: 0, pingsAck: 0, maxIdleMs: 0,
         };
+        function observeActivity() {
+            const now = performance.now();
+            stats.maxIdleMs = Math.max(stats.maxIdleMs, Math.round(now - lastActivity));
+            lastActivity = now;
+        }
+        // Diagnostic failures must never interrupt or replay a generation.
+        function report(summary) {
+            try { onDiagnostic(summary); } catch { /* logging is best effort */ }
+        }
         const responseBody = new Transform({
             transform(chunk, encoding, callback) {
-                lastActivity = performance.now();
+                observeActivity();
                 stats.firstDataMs ??= Math.round(lastActivity - started);
                 stats.lastDataMs = Math.round(lastActivity - started);
                 stats.bytes += chunk.length;
                 stats.phase = 'body';
+                try { observer?.write(chunk, stats.lastDataMs); } catch { observerFailed = true; observer = undefined; }
                 callback(null, chunk);
             },
         });
@@ -109,6 +127,7 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
             stopped = true;
             clearTimeout(setupTimer);
             clearTimeout(pingTimer);
+            clearInterval(progressTimer);
             signal?.removeEventListener('abort', abort);
             if (error) {
                 responseBody.destroy(error);
@@ -122,8 +141,11 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
                 // Buffered response bytes remain readable by the consumer.
                 session?.close();
             }
-            onDiagnostic({
+            report({
                 ...stats, elapsedMs: Math.round(performance.now() - started),
+                maxIdleMs: Math.max(stats.maxIdleMs, Math.round(performance.now() - lastActivity)),
+                ...(observer ? { sse: observer.summary() } : {}),
+                ...(observerFailed ? { observerFailed: true } : {}),
                 ...(stream ? { rstCode: stream.rstCode } : {}),
                 outcome: error ? (error.name === 'AbortError' ? 'cancelled' : 'error') : 'eof',
                 ...(error ? { code: error.code || error.name } : {}),
@@ -148,6 +170,15 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
         }
         setupTimer = setTimeout(() => fail('ETIMEDOUT', 'Vertex connection setup timed out'), connectTimeoutMs);
         setupTimer.unref();
+        if (Number.isFinite(progressIntervalMs) && progressIntervalMs > 0 && progressIntervalMs <= 2147483647) {
+            progressTimer = setInterval(() => report({
+                id: stats.id, outcome: 'progress', phase: stats.phase,
+                elapsedMs: Math.round(performance.now() - started),
+                idleMs: Math.round(performance.now() - lastActivity),
+                bytes: stats.bytes, pingsSent: stats.pingsSent, pingsAck: stats.pingsAck,
+            }), progressIntervalMs);
+            progressTimer.unref();
+        }
 
         function startSession(connectedSocket) {
             socket = connectedSocket;
@@ -180,7 +211,7 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
                     if (stopped) return;
                     clearTimeout(setupTimer);
                     stats.connectMs = Math.round(performance.now() - started);
-                    lastActivity = performance.now();
+                    observeActivity();
                     try {
                         const requestHeaders = {
                             ...Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])),
@@ -204,9 +235,12 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
                         stream.once('response', responseHeaders => {
                             if (stopped) return;
                             receivedHeaders = true;
-                            lastActivity = performance.now();
+                            observeActivity();
                             stats.headersMs = Math.round(lastActivity - started);
                             stats.status = Number(responseHeaders[':status']);
+                            if (observeSse && stats.status === 200 && /^text\/event-stream\b/i.test(String(responseHeaders['content-type'] || ''))) {
+                                observer = createVertexStreamObserver();
+                            }
                             // We request identity encoding so raw SSE bytes remain intact.
                             const encoding = responseHeaders['content-encoding'];
                             if (encoding && encoding !== 'identity') {
