@@ -6319,9 +6319,9 @@ export function isImageInliningSupported() {
             );
         }
         case chat_completion_sources.MAKERSUITE:
-            return visionSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return oai_settings.google_model === 'gemini-4-argon' || visionSupportedModels.some(model => oai_settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return visionSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return oai_settings.vertexai_model === 'gemini-4-argon' || visionSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
         case chat_completion_sources.CLAUDE:
             return visionSupportedModels.some(model => oai_settings.claude_model.includes(model));
         case chat_completion_sources.OPENROUTER:

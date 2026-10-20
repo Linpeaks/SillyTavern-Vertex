@@ -273,6 +273,8 @@
     "enable_functions_desc_3": "可以被各种扩展利用来提供附加功能。",
     "enable_functions_desc_4": "当提示词后处理没有选择工具时不支持。",
     "Send inline media": "发送内联媒体",
+    "Images will be saved, but the current connection or model does not support sending them.": "图片会保存到聊天，但当前连接或模型不支持发送图片。",
+    "Images will be saved, but will not be sent to the model. Enable Send inline media in Chat Completion settings and save your preset.": "图片会保存到聊天，但不会发送给模型。请在聊天补全设置中开启“发送内联媒体”，并保存预设。",
     "image_inlining_hint_1": "如果模型支持，就可以在提示词中发送媒体文件。",
     "video_inlining_hint_4": "视频必须在 20MB 以下且时长不超过 1 分钟。",
     "audio_inlining_hint_2": "音频必须小于 20MB。",

@@ -59,7 +59,7 @@ import { humanizedDateTime } from './RossAscends-mods.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './constants.js';
 import { nativePdfMarker, NATIVE_PDF_LIMITS, supportsNativePdf } from './native-pdf.js';
-import { oai_settings } from './openai.js';
+import { isImageInliningSupported, oai_settings } from './openai.js';
 
 /**
  * @typedef {Object} FileAttachment
@@ -212,6 +212,12 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
         if (!message.extra || typeof message.extra !== 'object') message.extra = {};
         const fileInput = document.getElementById(inputId);
         if (!(fileInput instanceof HTMLInputElement)) return;
+
+        if (main_api === 'openai' && [...fileInput.files].some(file => file.type.startsWith('image/')) && !isImageInliningSupported()) {
+            toastr.warning(oai_settings.media_inlining
+                ? t`Images will be saved, but the current connection or model does not support sending them.`
+                : t`Images will be saved, but will not be sent to the model. Enable Send inline media in Chat Completion settings and save your preset.`);
+        }
 
         if (nativePdf) {
             const pdfs = [...fileInput.files].filter(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name));

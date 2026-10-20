@@ -1,4 +1,6 @@
 {
+    "Images will be saved, but the current connection or model does not support sending them.": "圖片會儲存到聊天，但目前連線或模型不支援傳送圖片。",
+    "Images will be saved, but will not be sent to the model. Enable Send inline media in Chat Completion settings and save your preset.": "圖片會儲存到聊天，但不會傳送給模型。請在聊天補全設定中開啟「Send inline media」，並儲存預設。",
     "Extract text": "擷取文字",
     "Original PDF (Vertex Argon)": "傳送 PDF 原始檔（Vertex Argon）",
     "Download original PDF": "下載 PDF 原始檔",

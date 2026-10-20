@@ -522,6 +522,15 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 验证：新建聊天、聊天完整性、聊天预览共 3 套 28 项测试通过；上述三个 JavaScript 文件 ESLint 通过。第一次测试因隔离环境未设置完整备份配置变量而退出，补齐与既有测试相同的四个环境变量后通过，未修改实际配置。没有以自动化操作用户真实聊天来测试。
 - Git：基线 `bb2f611c7`，分支 `codex/vertex-gemini-investigation`；本节随聊天修复独立提交，原有未跟踪 `_claude/` 保留且不暂存。下一步处理图片能力遗漏及 PDF 限额，分别记录。
 
+## 005B · 2026-10-20（Asia/Shanghai）· 图片附件未进入请求
+
+- 当前有效设置与使用中的预设均为 `media_inlining: false`；此外 `isImageInliningSupported()` 的 Google 支持列表没有 `gemini-4-argon`。前者关闭所有图片内联，后者即使打开开关仍阻止 Argon 图片进入 `Message.addImage()`。附件保存与模型请求是两条不同流程。
+- 相关聊天的 47 处已保存图片引用均能找到物理文件；当前全局媒体显示为 list，未发现此处由 gallery 仅发送选中图片引起。没有复述或提交图片内容。Google [Argon 官方模型规格](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon?hl=zh-CN) 明确支持图片输入。
+- 修改：`public/scripts/openai.js` 在 Vertex/AI Studio 分支精确识别 Argon，沿用既有图像读取、压缩和转换流程；不泛化为所有未来 Gemini 4 模型。`public/scripts/chats.js` 在图片附件批次的上传前检查是否能内联，无法发送时提示开关或模型原因，一批只提示一次。新增简繁中文提示；不改用户设置和预设，启用需勾选“发送内联媒体”并保存预设。
+- `tests/google-image-attachments.test.js` 验证两个 Google 来源、关闭开关、其他主 API、已有与未知模型、实际 addImage → merge_tools → Google inlineData 字节保留、批次提示和设置不变。与原生 PDF 附件回归共 2 套 10 项通过；相关 JavaScript ESLint、两份翻译 JSON 解析通过。图片压缩在本次合成测试中为桩，不代表实际浏览器压缩质量或 Google 视觉识别实测。
+- 测试规范复查：仓库的 Playwright ESLint 规则不识别 Jest `test.each`，改成循环声明普通 `test`，并修正一处引号；未关闭规则。复跑图片 6 项及 ESLint 均通过，修正包含在同一图片提交中。
+- Git：上个聊天提交 `22abe9254`；本节随图片修复独立提交。未启动真实生成或改动用户页面。下一步提高 PDF 原文件限额并验证旧引用兼容和总请求限制。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
