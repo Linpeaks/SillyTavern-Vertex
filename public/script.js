@@ -1425,7 +1425,7 @@ export async function replaceCurrentChat() {
             characters[this_chid].chat = `${name2} - ${humanizedDateTime()}`;
             $('#selected_chat_pole').val(characters[this_chid].chat);
             saveCharacterDebounced();
-            await getChat();
+            await getChat({ allowMissing: true });
         }
     }
 }
@@ -7631,7 +7631,7 @@ export async function unshallowCharacter(characterId) {
     await getOneCharacter(avatar);
 }
 
-export async function getChat() {
+export async function getChat({ allowMissing = false } = {}) {
     try {
         await unshallowCharacter(this_chid);
 
@@ -7643,6 +7643,7 @@ export async function getChat() {
                 ch_name: characters[this_chid].name,
                 file_name: characters[this_chid].chat,
                 avatar_url: characters[this_chid].avatar,
+                allow_missing: allowMissing,
             }),
         });
 
@@ -10640,7 +10641,7 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
         chat_metadata = {};
         characters[this_chid].chat = `${name2} - ${humanizedDateTime()}`;
         $('#selected_chat_pole').val(characters[this_chid].chat);
-        await getChat();
+        await getChat({ allowMissing: true });
         await createOrEditCharacter(new CustomEvent('newChat'));
         if (deleteCurrentChat) await delChat(chat_file_for_del + '.jsonl');
     }

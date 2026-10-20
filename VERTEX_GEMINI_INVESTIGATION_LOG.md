@@ -513,6 +513,15 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 回滚优先按功能进行 git revert；若要撤销诊断，可先撤销边界补充再撤销诊断提交；撤销 PDF 功能前先把需要继续使用的原生 PDF 重新附加为文本。正常文件系统备份应同时包含聊天与 user/files 中原文件，仅导出聊天 JSON 不会打包 PDF。
 - 下一步为用户日常生成观察：若仍无提前思考，查看 sse.firstThoughtMs/thoughtChars 与 finishReasons/usage；thoughtChars=0 只表示未观察到摘要，toolParts>0 且 textChars=0 仍可能是合法工具正文。skippedEvents/malformedEvents/incompleteEvent 需同时考虑，不能凭诊断缺项判空或自动重试。
 
+## 005A · 2026-10-20（Asia/Shanghai）· 新建聊天缺失提示
+
+- 用户本轮报告三次聊天文件缺失提示、图片附件无法识别，并要求放宽原生 PDF 限额。授权范围为针对这些问题排查修复；保留稳定传输、工具正文、私人预设和配置，不提交运行数据、不向远端推送。
+- 当前检查：用户列出的三个文件均存在，分别为 2、2、4 行有效 JSON；两处相关目录共 9 个聊天文件的非空 JSON 行均可解析。仅检查结构及元数据，未把真实聊天正文写入本记录。现存文件有效并不能证明历史上所有缺失提示都无害。
+- 源码证据：`doNewChat()` 和 `replaceCurrentChat()` 的无现有聊天分支，在首次保存之前调用 `getChat()`；后端将尚不存在的新文件统一打印成缺失/空文件警告。随后 `getChatResult()` 创建首条消息并保存，与本次文件创建时间和有效内容相符。
+- 修改：`public/script.js` 仅在这两处明确新建流程传递 `allowMissing: true`；`src/endpoints/chats.js` 仅对明确新建且确实不存在的文件免除该警告。普通读取、已存在空文件、保存及完整性防覆盖规则不变。`tests/chat-new-session.test.js` 增加四项合成文件/实际新建函数测试。
+- 验证：新建聊天、聊天完整性、聊天预览共 3 套 28 项测试通过；上述三个 JavaScript 文件 ESLint 通过。第一次测试因隔离环境未设置完整备份配置变量而退出，补齐与既有测试相同的四个环境变量后通过，未修改实际配置。没有以自动化操作用户真实聊天来测试。
+- Git：基线 `bb2f611c7`，分支 `codex/vertex-gemini-investigation`；本节随聊天修复独立提交，原有未跟踪 `_claude/` 保留且不暂存。下一步处理图片能力遗漏及 PDF 限额，分别记录。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

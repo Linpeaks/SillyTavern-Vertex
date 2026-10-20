@@ -572,9 +572,11 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
 /**
  * Gets the chat as an object.
  * @param {string} chatFilePath The full chat file path.
+ * @param {object} [options] Read options
+ * @param {boolean} [options.allowMissing] New chats are read before their first save
  * @returns {Array}} If the chatFilePath cannot be read, this will return [].
  */
-export function getChatData(chatFilePath) {
+export function getChatData(chatFilePath, { allowMissing = false } = {}) {
     let chatData = [];
 
     const chatJSON = tryReadFileSync(chatFilePath) ?? '';
@@ -582,7 +584,7 @@ export function getChatData(chatFilePath) {
         const lines = chatJSON.split('\n');
         // Iterate through the array of strings and parse each line as JSON
         chatData = lines.map(line => tryParse(line)).filter(x => x);
-    } else {
+    } else if (!(allowMissing && !fs.existsSync(chatFilePath))) {
         console.warn(`File not found: ${chatFilePath}. The chat does not exist or is empty.`);
     }
 
@@ -611,7 +613,7 @@ router.post('/get', validateAvatarUrlMiddleware, function (request, response) {
         const chatFileName = `${String(request.body.file_name)}.jsonl`;
         const chatFilePath = path.join(directoryPath, sanitize(chatFileName));
 
-        return response.send(getChatData(chatFilePath));
+        return response.send(getChatData(chatFilePath, { allowMissing: request.body.allow_missing === true }));
     } catch (error) {
         console.error(error);
         return response.send({});
