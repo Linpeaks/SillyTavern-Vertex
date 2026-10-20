@@ -224,7 +224,7 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
             const existing = (message.extra.files || []).filter(file => file.mode === 'native');
             if (pdfs.length + existing.length > NATIVE_PDF_LIMITS.files
                 || [...pdfs, ...existing].reduce((sum, file) => sum + file.size, 0) > NATIVE_PDF_LIMITS.totalBytes) {
-                throw new Error('Original PDF limit: 4 attachments and 12 MiB per message.');
+                throw new Error(`Original PDF limit: ${NATIVE_PDF_LIMITS.files} attachments and ${NATIVE_PDF_LIMITS.totalBytes / 1e6} MB per message.`);
             }
         }
 
@@ -234,7 +234,7 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
                     throw new Error('Original PDFs require native Vertex AI with gemini-4-argon. Select Extract text for other connections.');
                 }
                 if (!message.is_user) throw new Error('Attach original PDFs to user messages.');
-                if (file.size > NATIVE_PDF_LIMITS.fileBytes) throw new Error('Original PDF limit: 5 MiB per file.');
+                if (file.size > NATIVE_PDF_LIMITS.fileBytes) throw new Error(`Original PDF limit: ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file.`);
                 const data = (await getBase64Async(file)).split(',')[1];
                 const response = await fetch('/api/files/upload-pdf', {
                     method: 'POST', headers: getRequestHeaders(), body: JSON.stringify({ data }),
@@ -429,7 +429,7 @@ async function onFileAttach(fileList) {
     $('#file_form .file_name').text(name).attr('title', title);
     $('#file_form .file_size').text(humanFileSize(size)).attr('title', size);
     $('#pdf_attachment_mode_label').toggleClass('displayNone', ![...fileList].some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)))
-        .attr('title', 'Original PDF: native Vertex Argon; 5 MiB per file, 4 files / 100 pages / 12 MiB per request. PDF context usage is estimated.');
+        .attr('title', `Original PDF: native Vertex Argon; ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file, ${NATIVE_PDF_LIMITS.files} files / ${NATIVE_PDF_LIMITS.pages} pages / ${NATIVE_PDF_LIMITS.totalBytes / 1e6} MB per request. Context estimate: ${NATIVE_PDF_LIMITS.estimatedTokensPerPage} tokens/page; actual usage may differ.`);
     $('#file_form').removeClass('displayNone');
 
     // Reset form on chat change (if not on a welcome screen)
@@ -551,7 +551,7 @@ function embedMessageFile(messageId, messageBlock) {
         if ([...e.target.files].some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name))) {
             const select = $('<select>').append($('<option>').val('text').text(t`Extract text`),
                 $('<option>').val('native').text(t`Original PDF (Vertex Argon)`));
-            const result = await callGenericPopup($('<div>').append($('<p>').text('PDF attachment mode (original: 5 MiB per file, 100 pages total)')).append(select), POPUP_TYPE.CONFIRM);
+            const result = await callGenericPopup($('<div>').append($('<p>').text(`PDF attachment mode (original: ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file, ${NATIVE_PDF_LIMITS.pages} pages total; context token limits also apply)`)).append(select), POPUP_TYPE.CONFIRM);
             if (result !== POPUP_RESULT.AFFIRMATIVE) { e.target.value = ''; return; }
             e.target.dataset.pdfMode = String(select.val());
         }

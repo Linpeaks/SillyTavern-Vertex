@@ -1,8 +1,12 @@
 // Shared by browser and server. References survive text-only preset processing;
 // only the backend replaces them with PDF parts after prompt conversion.
-export const NATIVE_PDF_LIMITS = Object.freeze({ fileBytes: 5 * 1024 * 1024, files: 4, pages: 100,
-    totalBytes: 12 * 1024 * 1024, requestBytes: 20 * 1024 * 1024, estimatedTokensPerPage: 4096 });
-const markerPattern = /\[\[ST_NATIVE_PDF:([a-f0-9-]{36}):([a-f0-9]{64}):(\d{1,3})\]\]/g;
+// Argon allows 50 MB / 3000 pages per PDF. Aggregate limits below are local
+// memory budgets, not Google service quotas. MB here means 1,000,000 bytes.
+// Page tokens remain a heuristic, based on the documented high-resolution
+// Gemini PDF page estimate, not an exact Argon token count or API setting.
+export const NATIVE_PDF_LIMITS = Object.freeze({ fileBytes: 50_000_000, files: 16, pages: 3000,
+    totalBytes: 100_000_000, requestBytes: 140_000_000, estimatedTokensPerPage: 1120 });
+const markerPattern = /\[\[ST_NATIVE_PDF:([a-f0-9-]{36}):([a-f0-9]{64}):(\d{1,4})\]\]/g;
 
 /** @param {object} file @returns {string} Opaque reference, never file contents */
 export function nativePdfMarker(file) {
@@ -56,7 +60,7 @@ export function validateNativePdfRequest(body) {
     if (!supportsNativePdf(body)) throw new Error('Original PDFs currently require native Vertex AI with gemini-4-argon. Reattach using text extraction for this connection.');
     if (refs.length > NATIVE_PDF_LIMITS.files || refs.some(ref => ref.pages < 1)
         || refs.reduce((sum, ref) => sum + ref.pages, 0) > NATIVE_PDF_LIMITS.pages) {
-        throw new Error('Native PDF context limit: 4 attachments and 100 pages in total.');
+        throw new Error(`Native PDF context limit: ${NATIVE_PDF_LIMITS.files} attachments and ${NATIVE_PDF_LIMITS.pages} pages in total. Context token limits also apply.`);
     }
     return refs;
 }

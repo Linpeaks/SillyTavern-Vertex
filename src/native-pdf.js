@@ -10,7 +10,7 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
  */
 async function inspectPdf(bytes) {
     if (!bytes.length || bytes.length > NATIVE_PDF_LIMITS.fileBytes || !bytes.subarray(0, 1024).includes(Buffer.from('%PDF-'))) {
-        throw new Error('Original PDF must be a valid PDF of at most 5 MiB.');
+        throw new Error(`Original PDF must be a valid PDF of at most ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB.`);
     }
     const { getDocument, GlobalWorkerOptions } = await import('../public/lib/pdf.min.mjs');
     GlobalWorkerOptions.workerSrc = new URL('../public/lib/pdf.worker.min.mjs', import.meta.url).href;
@@ -22,7 +22,7 @@ async function inspectPdf(bytes) {
         for (let page = 1; page <= pdf.numPages; page++) await pdf.getPage(page);
         return pdf.numPages;
     } catch {
-        throw new Error('Cannot read this PDF. Use an unlocked, valid PDF with at most 100 pages.');
+        throw new Error(`Cannot read this PDF. Use an unlocked, valid PDF with at most ${NATIVE_PDF_LIMITS.pages} pages.`);
     } finally {
         await task.destroy();
     }
@@ -55,8 +55,19 @@ export async function resolveNativePdfs(body, directories, expected) {
     assertNativePdfReferences(expected, messages);
     const cache = new Map();
     let totalBytes = 0;
+    const accountBytes = size => {
+        totalBytes += size;
+        if (totalBytes > NATIVE_PDF_LIMITS.totalBytes) throw new Error(`Native PDF total exceeds ${NATIVE_PDF_LIMITS.totalBytes / 1e6} MB.`);
+    };
     const root = await fs.realpath(directories.files);
     for (const ref of expected) {
+        // Repeated references still count toward the request budget, but need
+        // only one disk read, PDF parse and base64 allocation per request.
+        const cached = cache.get(ref.marker);
+        if (cached) {
+            accountBytes(cached.size);
+            continue;
+        }
         if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(ref.id)) throw new Error('Invalid PDF attachment reference.');
         const filename = path.join(root, `native-pdf-${ref.id}.pdf`);
         let bytes;
@@ -78,10 +89,9 @@ export async function resolveNativePdfs(body, directories, expected) {
                 bytes = bytes.subarray(0, bytesRead);
             } finally { await file.close(); }
         } catch { throw new Error('Original PDF is missing or unavailable for this user. Reattach the file.'); }
+        accountBytes(bytes.length);
         if (sha256(bytes) !== ref.sha256 || await inspectPdf(bytes) !== ref.pages) throw new Error('PDF attachment changed. Reattach the file.');
-        totalBytes += bytes.length;
-        if (totalBytes > NATIVE_PDF_LIMITS.totalBytes) throw new Error('Native PDF total exceeds 12 MiB.');
-        cache.set(ref.marker, bytes.toString('base64'));
+        cache.set(ref.marker, { data: bytes.toString('base64'), size: bytes.length });
     }
     for (const content of body.contents) {
         content.parts = content.parts.flatMap(part => {
@@ -93,7 +103,7 @@ export async function resolveNativePdfs(body, directories, expected) {
             for (const ref of refs) {
                 const index = part.text.indexOf(ref.marker, offset);
                 if (index > offset) parts.push({ text: part.text.slice(offset, index) });
-                parts.push({ inlineData: { mimeType: 'application/pdf', data: cache.get(ref.marker) } });
+                parts.push({ inlineData: { mimeType: 'application/pdf', data: cache.get(ref.marker).data } });
                 offset = index + ref.marker.length;
             }
             if (offset < part.text.length) parts.push({ text: part.text.slice(offset) });
@@ -101,6 +111,6 @@ export async function resolveNativePdfs(body, directories, expected) {
         });
     }
     if (Buffer.byteLength(JSON.stringify(body)) > NATIVE_PDF_LIMITS.requestBytes) {
-        throw new Error('Encoded PDF request exceeds 20 MiB. Reduce attachments or context.');
+        throw new Error(`Encoded PDF request exceeds ${NATIVE_PDF_LIMITS.requestBytes / 1e6} MB. Reduce attachments or context.`);
     }
 }

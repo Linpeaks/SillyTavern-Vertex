@@ -52,7 +52,7 @@ beforeAll(async () => {
     vm.runInContext(source.match(/^router.post\('\/generate', async function[^]*?^}\);/m)[0], context);
     vm.runInContext(uploadSource.match(/^router.post\('\/upload-pdf', async[^]*?^}\);/m)[0], context);
     const app = express();
-    app.use(express.json({ limit: '8mb' }));
+    app.use(express.json({ limit: '70mb' }));
     app.use((req, _res, next) => { req.user = { directories }; next(); });
     app.use(router);
     server = http.createServer(app).listen(0, '127.0.0.1');
@@ -67,7 +67,7 @@ afterAll(async () => {
 const post = (route, body) => fetch(url + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 test('real upload and generate routes preserve PDF bytes, merge_tools and tool-only response', async () => {
-    const bytes = makePdf();
+    const bytes = makePdf('synthetic large document ' + 'x'.repeat(6 * 1024 * 1024));
     const upload = await post('/upload-pdf', { data: bytes.toString('base64') });
     expect(upload.status).toBe(200);
     const file = await upload.json();

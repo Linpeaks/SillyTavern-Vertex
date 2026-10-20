@@ -531,6 +531,27 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 测试规范复查：仓库的 Playwright ESLint 规则不识别 Jest `test.each`，改成循环声明普通 `test`，并修正一处引号；未关闭规则。复跑图片 6 项及 ESLint 均通过，修正包含在同一图片提交中。
 - Git：上个聊天提交 `22abe9254`；本节随图片修复独立提交。未启动真实生成或改动用户页面。下一步提高 PDF 原文件限额并验证旧引用兼容和总请求限制。
 
+## 005C · 2026-10-20（Asia/Shanghai）· 放宽 PDF 与本轮验收
+
+**依据与实施范围**
+
+- 用户要求扩展偏严的 PDF 限制。本轮再次核对 [Argon 规格](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon?hl=zh-CN) 和 [文档输入说明](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/document-understanding)：API/Cloud Storage 的 PDF 单文件上限为 50 MB、每文件最多 3000 页。旧 5 MiB / 100 页是 004 中的本地先行约束，不是官方上限。
+- `public/scripts/native-pdf.js` 统一改为：单文件 50,000,000 字节；所选上下文最多 16 个引用、总计 3000 页和 100,000,000 字节原文件；含 Base64 的整个 Google JSON 请求最多 140,000,000 字节。16 个文件、合计页数/字节及 JSON 总量均是本地内存预算，不冒充 Google 额度。MB 为十进制，50 MB 约 47.7 MiB。
+- 继续保留总量边界，原因是当前 inlineData 需要在内存同时持有原文件、Base64 和 JSON；任意取消限制会明显增加内存峰值。100 MB 原文件编码后约 133.3 MB，140 MB 请求预算留出文本和结构开销，文本/图片等同请求内容仍一并计入。大文件读取等待及网络上传时间可能增加，未变更超时、HTTP/2、PING 或自动重试策略。
+- 旧引用继续兼容，标记页数字段扩为四位。`src/native-pdf.js` 同步文件校验、页数和最终请求限制；同一请求中重复引用复用一次读取/解析/编码，但每个发送副本仍分别计入总量。前端 `chats.js`、后端 `files.js` 的校验提示与选择说明改为引用共享常量，避免前端放行而后端仍使用旧上限。
+- 页预算由 4096 调整为约 1120 token/页，并在界面标注估算。来源文档的 1120 是 **Gemini 3 高分辨率 PDF** 数值，本实现仅借作启发式预算，未确认 Argon 同值；没有设置或降低模型分辨率，也没有新增远程 countTokens 请求。3000 页是文件/总页数边界，**不保证 3000 页能进入当前上下文**；仍受用户的上下文预算、提示词和实际模型 token 限制约束。密集文字文档的实际消耗仍可能超过估计，不能把估计当精确计费或保证。
+- 更新 `tests/native-pdf.test.js`、`native-pdf-request.test.js`、`native-pdf-attachments.test.js`；未修改生产依赖、服务器整体 500 MB 请求解析配置或用户文件。原生 PDF 仍仅限原生 Vertex Argon（Full/Express、无反向代理）；默认提取文本方式、工具正文和历史文件校验保留。
+
+**测试、限制与交付**
+
+- PDF 3 套 17 项通过：50 MB 合成 PDF 可以原样保存并核对 SHA；多 1 字节拒绝且不落盘；1001 页文件上传/解析/四位引用/最终 PDF part 保留；旧两位页数引用兼容；3001 页及合计页数超限拒绝。大于旧 5 MiB 的约 6 MiB 合成 PDF 经实际上传/生成路由进入模拟上游，字节一致；merge_tools、HIGH 思考设置、完整工具回复保持正常。
+- 总量测试覆盖重复引用超过 100 MB 和非 ASCII 文本让最终 JSON UTF-8 字节数超过 140 MB；加密、损坏、跨用户、缺失/改动、引用被删除/复制、不支持连接和失败批次撤回回归通过。使用的 50 MB 文件含合成 PDF 及空白填充，只证明大小边界/字节保留，不代表 50 MB 复杂扫描件性能或 Google 接受率。
+- 最终完整单元回归：`node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.json --runInBand --verbose=false --silent`，**29 套件、524 项通过、1 项可选慢测试跳过，8.939 秒**。本次传输无改动，未再次启用已在 004 实测通过的 65 秒静默测试。所有本轮修改 JavaScript 的 ESLint、翻译 JSON 解析、`git diff --check` 通过。
+- 所有网络生成测试均使用本机模拟；本轮没有 Google 生成请求，没有验证真实浏览器全链路/在线预设或 TUN 上传大文件。尚不能承诺模型已经实际识别用户图片或读完大型 PDF。用户列出的文件结构正常属于当前磁盘证据，不能反推历史上从未发生读取失败。
+- 生效步骤：结束生成后重启酒馆后端并刷新页面；图片在聊天补全设置开启“发送内联媒体”并保存当前预设，否则开关仍阻止发送；PDF 附件选择“发送 PDF 原文件（Vertex Argon）”。本轮没有改 `settings.json`、预设、世界书、扩展、聊天或用户进程。
+- Git：聊天修复 `22abe9254`；图片修复 `9a0ef78e6`；本节随 PDF 限额调整单独提交。保留 `_claude/`，仅显式暂存源码、合成测试及本日志，不包含运行数据，不推送远端。后续优先按功能 `git revert`；若撤销本次 PDF 放宽，超过旧限额的已存原生附件会重新受旧约束，文件本身不会被删除。
+- 本轮收到替换版 AGENTS 指令，再次强调每次对话更新时间线/调查/改动并使用 Git；本节及 005A/B 合并完成本轮记录。下一步为正常使用验证：先用一张图确认开关生效，再以实际所需 PDF 大小验证原文件读取；只在出现具体新错误时继续追踪，不自动重提生成。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

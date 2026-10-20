@@ -4,7 +4,7 @@ import os from 'node:os';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, expect, jest, test } from '@jest/globals';
 import { storeNativePdf, resolveNativePdfs } from '../src/native-pdf.js';
-import { nativePdfMarker, getNativePdfReferences, assertNativePdfReferences, validateNativePdfRequest, estimateNativePdfTokens } from '../public/scripts/native-pdf.js';
+import { NATIVE_PDF_LIMITS, nativePdfMarker, getNativePdfReferences, assertNativePdfReferences, validateNativePdfRequest, estimateNativePdfTokens } from '../public/scripts/native-pdf.js';
 import { makePdf } from './fixtures/native-pdf.js';
 
 jest.unstable_mockModule('../src/util.js', () => ({
@@ -55,7 +55,7 @@ test('survives text-only preset JSON wrapping, merge_tools and Google conversion
     expect(Buffer.from(pdfParts[0].inlineData.data, 'base64')).toEqual(bytes);
     expect(JSON.stringify(body)).not.toContain('ST_NATIVE_PDF');
     expect(JSON.stringify(body)).toContain('question');
-    expect(estimateNativePdfTokens(selected)).toBe(4096);
+    expect(estimateNativePdfTokens(selected)).toBe(1120);
 });
 
 test('preserves placement in history and multiple files; metadata survives JSON reload', async () => {
@@ -88,19 +88,20 @@ test('rejects corrupt, non-PDF, bad encoding and oversized files', async () => {
         await expect(storeNativePdf(directories, data)).rejects.toThrow();
     }
     expect(await fs.readdir(directories.files)).toEqual([]);
-    await expect(storeNativePdf(directories, makePdf('many pages', 101).toString('base64'))).rejects.toThrow(/100 pages/);
+    await expect(storeNativePdf(directories, makePdf('many pages', 3001).toString('base64'))).rejects.toThrow(/3000 pages/);
 });
 
 test('enforces aggregate bytes and encoded request size before generation', async () => {
-    const padded = Buffer.concat([makePdf(), Buffer.alloc(Math.floor(4.1 * 1024 * 1024), 32)]);
+    const padded = makePdf('x'.repeat(8_000_000));
     const file = await storeNativePdf(directories, padded.toString('base64'));
     const marker = nativePdfMarker(file);
-    const refs = getNativePdfReferences({ content: marker.repeat(3) });
-    await expect(resolveNativePdfs({ contents: [{ parts: [{ text: marker.repeat(3) }] }] }, directories, refs)).rejects.toThrow(/12 MiB/);
+    const refs = getNativePdfReferences({ content: marker.repeat(13) });
+    await expect(resolveNativePdfs({ contents: [{ parts: [{ text: marker.repeat(13) }] }] }, directories, refs)).rejects.toThrow(/100 MB/);
     const small = await storeNativePdf(directories, makePdf().toString('base64'));
     const smallMarker = nativePdfMarker(small);
-    await expect(resolveNativePdfs({ contents: [{ parts: [{ text: smallMarker }, { text: 'x'.repeat(20 * 1024 * 1024) }] }] },
-        directories, getNativePdfReferences({ content: smallMarker }))).rejects.toThrow(/20 MiB/);
+    // Non-ASCII text also counts by UTF-8 bytes, not JavaScript string length.
+    await expect(resolveNativePdfs({ contents: [{ parts: [{ text: smallMarker }, { text: '字'.repeat(Math.ceil(NATIVE_PDF_LIMITS.requestBytes / 3)) }] }] },
+        directories, getNativePdfReferences({ content: smallMarker }))).rejects.toThrow(/140 MB/);
 });
 
 test('rejects a real password-protected PDF without storing it', async () => {
@@ -122,6 +123,30 @@ test('rejects unsupported models/providers/proxies and lost or duplicated refere
     expect(() => assertNativePdfReferences(refs, [{ content: marker + marker }])).toThrow(/duplicated/);
     expect(() => validateNativePdfRequest({ ...request([]), native_pdf_refs: [marker] })).toThrow(/removed/);
     expect(() => getNativePdfReferences({ content: '[[ST_NATIVE_PDF:../../secret]]' })).toThrow(/damaged/);
-    expect(() => validateNativePdfRequest(request(Array(5).fill(messages[0])))).toThrow(/4 attachments/);
+    expect(() => validateNativePdfRequest(request(Array(17).fill(messages[0])))).toThrow(/16 attachments/);
     expect(validateNativePdfRequest({ messages: [{ content: 'ordinary text' }], model: 'anything' })).toEqual([]);
+});
+
+test('accepts a 1001-page original, preserving four-digit and legacy references', async () => {
+    const bytes = makePdf('many pages', 1001);
+    const file = await storeNativePdf(directories, bytes.toString('base64'));
+    expect(file.pages).toBe(1001);
+    const marker = nativePdfMarker(file);
+    const refs = validateNativePdfRequest(request([{ content: marker }]));
+    const body = { contents: [{ parts: [{ text: marker }] }] };
+    await resolveNativePdfs(body, directories, refs);
+    expect(createHash('sha256').update(Buffer.from(body.contents[0].parts[0].inlineData.data, 'base64')).digest('hex')).toBe(file.sha256);
+    expect(getNativePdfReferences({ content: nativePdfMarker({ ...file, pages: 99 }) })[0].pages).toBe(99);
+    expect(() => validateNativePdfRequest(request([{ content: marker.repeat(3) }]))).toThrow(/3000 pages/);
+});
+
+test('accepts exactly 50 MB and rejects one byte over the file cap without storing it', async () => {
+    const prefix = makePdf();
+    const bytes = Buffer.alloc(NATIVE_PDF_LIMITS.fileBytes, 32);
+    prefix.copy(bytes);
+    const file = await storeNativePdf(directories, bytes.toString('base64'));
+    expect(file.size).toBe(50_000_000);
+    expect(createHash('sha256').update(await fs.readFile(path.join(directories.root, file.url))).digest('hex')).toBe(file.sha256);
+    await expect(storeNativePdf(directories, Buffer.concat([bytes, Buffer.from(' ')]).toString('base64'))).rejects.toThrow(/oversized|50 MB/);
+    expect(await fs.readdir(directories.files)).toHaveLength(1);
 });

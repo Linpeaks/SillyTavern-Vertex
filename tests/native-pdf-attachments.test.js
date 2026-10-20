@@ -66,8 +66,8 @@ test('unsupported connection and file count stop before upload or conversion', a
     f.context.oai_settings.chat_completion_source = 'openai';
     await expect(f.context.populateFileAttachment({ is_user: true })).rejects.toThrow(/Vertex/);
     f.context.oai_settings.chat_completion_source = 'vertexai';
-    f.input.files = Array(5).fill(f.input.files[0]);
-    await expect(f.context.populateFileAttachment({ is_user: true })).rejects.toThrow(/4 attachments/);
+    f.input.files = Array(17).fill(f.input.files[0]);
+    await expect(f.context.populateFileAttachment({ is_user: true })).rejects.toThrow(/16 attachments/);
     expect(f.fetch).not.toHaveBeenCalled();
     expect(f.getBase64Async).not.toHaveBeenCalled();
 });
