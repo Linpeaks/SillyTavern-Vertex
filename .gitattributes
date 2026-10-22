@@ -1,0 +1,2 @@
+# Shell entrypoints must work in Termux after a Windows checkout/commit.
+*.sh text eol=lf

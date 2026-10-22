@@ -552,6 +552,32 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - Git：聊天修复 `22abe9254`；图片修复 `9a0ef78e6`；本节随 PDF 限额调整单独提交。保留 `_claude/`，仅显式暂存源码、合成测试及本日志，不包含运行数据，不推送远端。后续优先按功能 `git revert`；若撤销本次 PDF 放宽，超过旧限额的已存原生附件会重新受旧约束，文件本身不会被删除。
 - 本轮收到替换版 AGENTS 指令，再次强调每次对话更新时间线/调查/改动并使用 Git；本节及 005A/B 合并完成本轮记录。下一步为正常使用验证：先用一张图确认开关生效，再以实际所需 PDF 大小验证原文件读取；只在出现具体新错误时继续追踪，不自动重提生成。
 
+## 006 · 2026-10-22 23:12（Asia/Shanghai）· GitHub 公开源码与 Termux 一键部署
+
+### 用户请求与授权
+
+- 用户要求将当前修改版上传到自己的 GitHub、持续使用 Git 管理，并参考 Angler Toolbox，提供手机 Termux 一键安装及日后更新入口。补充明确选择 **公开仓库、免登录安装**；本轮授权包含创建公开 fork、推送经检查的源码和部署文档，不包含上传私人数据或调用模型生成。
+- 本轮基线：`codex/vertex-gemini-investigation` / `db9219eac`，原 `origin` 为官方仓库；唯一原有未跟踪项 `_claude/`。保留原分支，新建 `codex/termux-deployment`。既有 11 个本地修改提交完整保留。
+
+### 调查、实现与原因
+
+- 读取既有调查日志、AGENTS、官方 Android 文档及用户提供的 `mc10091009/st_manager.sh`。参考其依赖安装、Git 获取和管理菜单流程；本脚本独立编写，没有复制或重新分发对方代码。官方 Android 说明使用 `git`、`nodejs-lts`，32 位 ARM 另需 `esbuild`；本项目 Node 要求为 >=20。
+- GitHub 连接器读取身份为 `Linpeaks`，同名目标仓库尚不存在。连接器没有创建 fork / 本地 Git 推送能力，因此这部分使用已安装的 GitHub CLI 与 Git。受限环境内 gh 无法解密 Windows 凭据、Git 无法写 `.git`、Git Bash 无法初始化系统对象；自动审核通过的正常本机调用验证身份成功，未打印或保存 token，没有重新要求用户授权。
+- 新增 `termux.sh`：固定个人仓库 `main`、独立 `~/SillyTavern-Vertex`、缺失包安装、锁文件生产依赖、首次安装启动、`st` 菜单、start/update/backup/status/install。安装目录已存在且来源不符时停止；不接管普通版 `~/SillyTavern`，不提供删除重装操作。
+- 更新必须来源/分支匹配、源码干净、历史可快进，运行中的受管服务器拒绝更新/备份；备份成功后才快进。归档覆盖本安装内 data/config/secrets/plugins/公共第三方扩展，保存到手机独立备份目录；失败归档不冒充完成，不自动还原、不自动清除旧备份。锁文件或 Node 主版本变化才在日常启动/更新重装依赖，显式 install 可修复安装。
+- 启动固定本机监听、`./data`、默认 8000 端口，支持 `ST_PORT`。不修改电脑配置或用户数据，不自动重试模型生成。快捷入口写入手机 `$PREFIX/bin/st`，已存在无关同名命令时保留，不改 shell 启动配置。
+- `.gitattributes` 保证 Shell 脚本 LF；`.gitignore` 排除原有 `_claude` 及本地助手目录。README 和 `TERMUX_DEPLOYMENT.md` 说明一键安装、管理、私下迁移和电脑提交到手机更新的流程。AGENTS 记录本轮公开发布授权及后续边界。
+- 新增独立 Shell 工作流测试与 `Termux deployment checks` GitHub 工作流，后者仅在个人仓库运行 Ubuntu / Node.js 24 干净生产安装和空数据启动探测；原有应用业务实现和参数未改动。
+
+### 本地验证、失败修正与限制
+
+- **14 项隔离 Shell 工作流全部通过**：使用真实临时 Git 仓库、合成 data/配置/附件/扩展和模拟 npm/Node，不联网。覆盖安装启动、重复安装、无更新跳过、快进与可解压备份、脏源码/未知文件、错误来源/分支、受管进程保护、st 冲突、已有目录保留、历史分叉、备份失败阻断、npm 失败与修复、克隆失败。临时目录经过绝对路径边界确认后清理。
+- 首次 Shell 测试的模拟 PREFIX 中没有 Bash 解释器，改用 Bash 显式读取生成的快捷入口验证，未改动手机真实 shebang。Jest 在沙箱临时目录 realpath 受限，正常本机环境复跑成功。
+- **现有完整单元回归 29 套件，524 项通过，1 项可选慢测试跳过，10.427 秒**。本轮传输未改动，未重复 65 秒静默慢测试。Bash 语法、工作流 YAML 解析、`git diff --check` 通过。
+- 发布前对 40 个个人修改/新增路径进行常见凭据模式检查，未发现真实凭据。唯一私钥模式来自已明确说明的公共 localhost TLS 测试夹具；真实 data/config/secrets/第三方扩展/助手文件均处于忽略范围。该检查不是对所有上游历史进行穷尽安全审计。
+- 本地 Shell 是 Git Bash，npm/Node 服务为模拟；不能证明 Android 包管理、真实手机浏览器/后台存活、TUN/Google、大 PDF 内存或用户扩展兼容。此轮未启动或刷新电脑现有酒馆、未读取/迁移聊天正文、未调用 Google 生成。
+- GitHub 创建、推送、默认分支、raw 匿名入口 SHA 与 Linux 验证结果将在完成后追加同节。下一步为发布后核对，再由用户在手机正常使用验收。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

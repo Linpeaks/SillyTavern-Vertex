@@ -1,0 +1,46 @@
+name: Termux deployment checks
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-and-start:
+    if: github.repository == 'Linpeaks/SillyTavern-Vertex'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+        with:
+          node-version: 24
+      - name: Check Bash syntax and isolated manager workflows
+        run: |
+          bash -n termux.sh tests/termux-manager.test.sh
+          bash tests/termux-manager.test.sh
+      - name: Install locked production dependencies
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Start with empty temporary user data
+        shell: bash
+        run: |
+          scratch_dir=$(mktemp -d)
+          node server.js --configPath "$scratch_dir/config.yaml" --dataRoot "$scratch_dir/data" --listen false --browserLaunchEnabled false --port 18081 > "$scratch_dir/startup.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..90}; do
+            if curl --silent --fail http://127.0.0.1:18081/ -o /dev/null; then
+              echo 'Fresh production server returned HTTP 200 on loopback.'
+              exit 0
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat "$scratch_dir/startup.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          cat "$scratch_dir/startup.log"
+          exit 1

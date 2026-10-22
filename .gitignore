@@ -59,3 +59,8 @@ public/scripts/extensions/third-party
 yarn.lock
 *.code-workspace
 test-results/
+# Local assistant files are not part of the public source distribution.
+/_claude/
+/.claude/
+/.codex/
+/.agents/

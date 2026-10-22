@@ -11,3 +11,10 @@ The user requested a cautious, documented investigation of Vertex ECONNRESET and
 - Do not automatically resubmit generation on network failure or tool-only/empty-looking output. The user stores response prose in tool-call arguments; preserve that workflow.
 - Distinguish isolated tests, protocol connectivity probes, and actual browser/Google/TUN end-to-end evidence. Do not claim the old deleted implementation caused a fault without its source.
 - Do not push any remote unless the user requests it. Prefer targeted git revert for later rollback; never destructive cleanup of user data.
+
+## Personal GitHub and Termux deployment
+
+- On 2026-10-22 the user explicitly requested uploading this modified source to GitHub and selected a PUBLIC repository for anonymous one-command Termux deployment. This authorizes the initial publication for this task; future pushes still require the user's request.
+- Personal source: `Linpeaks/SillyTavern-Vertex`, deployment branch `main`; official repository remains `upstream` with pushes disabled locally. Never upload ignored data, configuration, credentials, local assistant files, or installed third-party extensions.
+- `termux.sh` is the phone installation/management entrypoint; `TERMUX_DEPLOYMENT.md` describes its boundaries. Keep the phone install separate from existing `~/SillyTavern`, preserve user data, use fast-forward-only updates with a successful local backup, and never auto-replay a generation.
+- Continue using the single `VERTEX_GEMINI_INVESTIGATION_LOG.md` for each conversation and focused change, including deployment work and verification limits. Preserve the original AGPL-3.0 license and upstream attribution.
