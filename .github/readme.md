@@ -1,3 +1,26 @@
+# SillyTavern Vertex · 个人修改版
+
+这是 [Linpeaks/SillyTavern-Vertex](https://github.com/Linpeaks/SillyTavern-Vertex)，
+基于官方 1.19.0，保留 Vertex HTTP/2、Argon 思考等级、图片和原生 PDF 等本地修改。
+
+**手机 Termux 一键安装（无需 GitHub 登录）：**
+
+```bash
+pkg update -y && pkg install -y curl && curl -fL https://raw.githubusercontent.com/Linpeaks/SillyTavern-Vertex/main/termux.sh -o "$TMPDIR/st-vertex-install.sh" && bash "$TMPDIR/st-vertex-install.sh"
+```
+
+首次安装并启动后，打开 **http://127.0.0.1:8000**。以后输入 `st` 打开菜单；
+`st start` 启动，`st update` 先备份再更新，`st backup` 备份，Ctrl+C 停止。
+安装在 `~/SillyTavern-Vertex`，与普通版独立。公开仓库不包含电脑上的聊天、密钥或私人预设。
+
+[完整部署与维护说明](../TERMUX_DEPLOYMENT.md) ·
+[修改与验证日志](../VERTEX_GEMINI_INVESTIGATION_LOG.md) ·
+[部署检查](https://github.com/Linpeaks/SillyTavern-Vertex/actions/workflows/termux-deployment.yml)
+
+以下保留原 SillyTavern 项目说明与归属。
+
+---
+
 <a name="readme-top"></a>
 
 ![][cover]

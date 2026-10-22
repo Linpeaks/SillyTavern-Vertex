@@ -576,7 +576,18 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - **现有完整单元回归 29 套件，524 项通过，1 项可选慢测试跳过，10.427 秒**。本轮传输未改动，未重复 65 秒静默慢测试。Bash 语法、工作流 YAML 解析、`git diff --check` 通过。
 - 发布前对 40 个个人修改/新增路径进行常见凭据模式检查，未发现真实凭据。唯一私钥模式来自已明确说明的公共 localhost TLS 测试夹具；真实 data/config/secrets/第三方扩展/助手文件均处于忽略范围。该检查不是对所有上游历史进行穷尽安全审计。
 - 本地 Shell 是 Git Bash，npm/Node 服务为模拟；不能证明 Android 包管理、真实手机浏览器/后台存活、TUN/Google、大 PDF 内存或用户扩展兼容。此轮未启动或刷新电脑现有酒馆、未读取/迁移聊天正文、未调用 Google 生成。
-- GitHub 创建、推送、默认分支、raw 匿名入口 SHA 与 Linux 验证结果将在完成后追加同节。下一步为发布后核对，再由用户在手机正常使用验收。
+- GitHub 创建、推送、默认分支、raw 匿名入口 SHA 与 Linux 验证结果见下节。下一步为发布后核对，再由用户在手机正常使用验收。
+
+### 发布与验收结果
+
+- 实现提交 `cfc882682bb5de17cb1d2b36976a4366c90561b3` 已推送到 **公开** fork `https://github.com/Linpeaks/SillyTavern-Vertex`，默认分支为 `main`，父仓库为官方 SillyTavern。CLI 首次创建因显式仓库参数不支持 `--remote=false` 返回用法错误，去掉不适用标志后正常创建，没有覆盖已有仓库。
+- 本地 `origin` 指向个人仓库；原官方远端重命名为 `upstream`，push URL 设为 `DISABLED`。开发分支跟踪 `origin/main`，本仓库 push 默认选择上游跟踪分支。推送明确使用 `origin HEAD:main`，未推送其他本地分支或 tags，未更改全局凭据配置。
+- 远端 API 确认首个发布提交与本地 HEAD 相同，tree 同为 `a689eae090e23c7d5faeed44463a8dca28a72a6e`。原有 `_claude/`、真实 data、config、第三方扩展均保留于本地忽略范围，工作区已跟踪文件干净。
+- 无 Authorization 的匿名 fetch 得到 raw `main/termux.sh` **HTTP 200 / 9040 bytes**，与本地逐字节一致，SHA256=`491a4dff15410e3b66791461bde541f429969b61821f7b8b330b196714070bc1`，无 CRLF。未执行来自网上的第三方脚本。
+- GitHub [首次部署检查](https://github.com/Linpeaks/SillyTavern-Vertex/actions/runs/39802651836) **completed / success**：Ubuntu 上 14 项 Shell 工作流、Node.js 24 干净 `npm ci --omit=dev --ignore-scripts`、空临时数据与独立端口启动均成功，真实服务器返回 loopback HTTP 200。此证据高于模拟 npm，但仍不是 Android 包安装或手机/TUN/Google 生成实测。
+- 关闭新 fork 继承的 9 项官方发布/自动维护工作流，保留个人部署检查与 PR 源码检查，避免个人 fork 沿用官方发布任务。没有发送邮件、消息、PR 或模型请求。
+- 匿名查看 GitHub 页面时发现它优先展示 `.github/readme.md`，根 README 的新安装入口未显示在主页。因此补充 `.github/readme.md` 顶部个人版本说明与同一安装命令，保留后面的原项目归属；此为发布后的文档修正，和本节结果以独立 docs 提交保存并推送。该提交自身哈希不递归写回日志，最终值由 Git 历史查询。
+- 本轮完成源码公开发布与可匿名下载的一键安装入口、持续 Git 管理、手机备份/更新及干净 Linux 启动验收。用户下一步在手机 Termux 运行 README 命令，首次重新配置 API 或按部署文档私下迁移数据；本轮没有代替用户做数据迁移或宣称手机实机已验收。
 
 ## 附录：初始调查可复现诊断
 
