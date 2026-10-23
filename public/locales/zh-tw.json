@@ -1,4 +1,5 @@
 {
+    "Vertex AI accepts original PDFs up to 50 MB each. Compress or split the file yourself, or use Extract text. Files are not split automatically.": "Vertex AI 的 PDF 原檔上限為每份 50 MB。請自行壓縮或拆分，也可選擇「擷取文字」；系統不會自動拆分檔案。",
     "Images will be saved, but the current connection or model does not support sending them.": "圖片會儲存到聊天，但目前連線或模型不支援傳送圖片。",
     "Images will be saved, but will not be sent to the model. Enable Send inline media in Chat Completion settings and save your preset.": "圖片會儲存到聊天，但不會傳送給模型。請在聊天補全設定中開啟「Send inline media」，並儲存預設。",
     "Extract text": "擷取文字",

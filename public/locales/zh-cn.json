@@ -1,4 +1,5 @@
 {
+    "Vertex AI accepts original PDFs up to 50 MB each. Compress or split the file yourself, or use Extract text. Files are not split automatically.": "Vertex AI 的 PDF 原文件上限为每份 50 MB。请自行压缩或拆分，也可选择“提取文本”；系统不会自动拆分文件。",
     "Extract text": "提取文本",
     "Original PDF (Vertex Argon)": "发送 PDF 原文件（Vertex Argon）",
     "Download original PDF": "下载 PDF 原文件",

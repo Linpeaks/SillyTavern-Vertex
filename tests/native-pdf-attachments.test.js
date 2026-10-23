@@ -21,7 +21,8 @@ function fixture() {
         $: () => ({ val: () => 'native', trigger: reset }),
         main_api: 'openai', oai_settings: { chat_completion_source: 'vertexai', vertexai_model: 'gemini-4-argon' },
         fetch, getFileAttachment, deleteFileFromServer, getBase64Async,
-        getRequestHeaders: () => ({}), t: strings => strings[0], toastr: { error() {} },
+        getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'synthetic' }),
+        t: strings => strings[0], translate: value => value, toastr: { error() {} },
     });
     vm.runInContext(functions, context);
     return { context, fetch, getFileAttachment, deleteFileFromServer, getBase64Async, input, reset };
@@ -43,9 +44,30 @@ test('native upload keeps only metadata in chat and resets mode via the form', a
     await f.context.populateFileAttachment(message);
     expect(f.fetch).toHaveBeenCalledTimes(1);
     expect(f.fetch.mock.calls[0][0]).toBe('/api/files/upload-pdf');
+    expect(f.fetch.mock.calls[0][1].body).toBe(f.input.files[0]);
+    expect(f.fetch.mock.calls[0][1].headers).toEqual({ 'Content-Type': 'application/pdf', 'X-CSRF-Token': 'synthetic' });
+    expect(f.getBase64Async).not.toHaveBeenCalled();
     expect(message.extra.files[0]).toMatchObject(file);
     expect(JSON.stringify(message)).not.toContain('c3ludGhldGlj');
     expect(f.reset).toHaveBeenCalledWith('reset');
+});
+
+test('150 MB original fails before reading/uploading any file and explains the service limit', async () => {
+    const f = fixture();
+    f.input.files[0].size = 150_000_000;
+    await expect(f.context.populateFileAttachment({ is_user: true })).rejects.toThrow(references.NATIVE_PDF_SIZE_ERROR);
+    expect(f.fetch).not.toHaveBeenCalled();
+    expect(f.getBase64Async).not.toHaveBeenCalled();
+});
+
+test('selecting an oversized PDF warns immediately without changing the attachment mode', async () => {
+    const warning = jest.fn();
+    const chain = { text: () => chain, attr: () => chain, toggleClass: () => chain, removeClass: () => chain };
+    const context = vm.createContext({ ...references, validateFile: async () => true, toastr: { warning },
+        translate: value => value, humanFileSize: value => String(value), $: () => chain, getCurrentChatId: () => null });
+    vm.runInContext(source.match(/^async function onFileAttach\([^]*?^}/m)[0], context);
+    await context.onFileAttach([{ type: 'application/pdf', name: 'synthetic.pdf', size: 150_000_000 }]);
+    expect(warning).toHaveBeenCalledWith(references.NATIVE_PDF_SIZE_ERROR);
 });
 
 test('a failed batch rolls back only its newly uploaded PDFs and rejects', async () => {

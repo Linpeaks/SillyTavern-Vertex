@@ -54,11 +54,11 @@ import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { ScraperManager } from './scrapers.js';
 import { DragAndDropHandler } from './dragdrop.js';
 import { renderTemplateAsync } from './templates.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './constants.js';
-import { nativePdfMarker, NATIVE_PDF_LIMITS, supportsNativePdf } from './native-pdf.js';
+import { nativePdfMarker, NATIVE_PDF_LIMITS, NATIVE_PDF_SIZE_ERROR, supportsNativePdf } from './native-pdf.js';
 import { isImageInliningSupported, oai_settings } from './openai.js';
 
 /**
@@ -221,6 +221,7 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
 
         if (nativePdf) {
             const pdfs = [...fileInput.files].filter(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
+            if (pdfs.some(file => file.size > NATIVE_PDF_LIMITS.fileBytes)) throw new Error(translate(NATIVE_PDF_SIZE_ERROR));
             const existing = (message.extra.files || []).filter(file => file.mode === 'native');
             if (pdfs.length + existing.length > NATIVE_PDF_LIMITS.files
                 || [...pdfs, ...existing].reduce((sum, file) => sum + file.size, 0) > NATIVE_PDF_LIMITS.totalBytes) {
@@ -234,13 +235,11 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
                     throw new Error('Original PDFs require native Vertex AI with gemini-4-argon. Select Extract text for other connections.');
                 }
                 if (!message.is_user) throw new Error('Attach original PDFs to user messages.');
-                if (file.size > NATIVE_PDF_LIMITS.fileBytes) throw new Error(`Original PDF limit: ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file.`);
-                const data = (await getBase64Async(file)).split(',')[1];
                 const response = await fetch('/api/files/upload-pdf', {
-                    method: 'POST', headers: getRequestHeaders(), body: JSON.stringify({ data }),
+                    method: 'POST', headers: { ...getRequestHeaders(), 'Content-Type': 'application/pdf' }, body: file,
                 });
                 const uploaded = await response.json();
-                if (!response.ok) throw new Error(uploaded.error || 'PDF upload failed.');
+                if (!response.ok) throw new Error(translate(uploaded.error || 'PDF upload failed.'));
                 if (!Array.isArray(message.extra.files)) message.extra.files = [];
                 const attachment = { ...uploaded, name: file.name, created: Date.now() };
                 message.extra.files.push(attachment);
@@ -424,6 +423,9 @@ async function onFileAttach(fileList) {
     }
 
     const name = fileList.length === 1 ? fileList[0].name : t`${fileList.length} files selected`;
+    if ([...fileList].some(file => (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) && file.size > NATIVE_PDF_LIMITS.fileBytes)) {
+        toastr.warning(translate(NATIVE_PDF_SIZE_ERROR));
+    }
     const size = [...fileList].reduce((acc, file) => acc + file.size, 0);
     const title = [...fileList].map(x => x.name).join('\n');
     $('#file_form .file_name').text(name).attr('title', title);

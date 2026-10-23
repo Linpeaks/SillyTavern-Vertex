@@ -34,7 +34,7 @@ beforeAll(async () => {
     await fsp.mkdir(directories.files, { recursive: true });
     const router = express.Router();
     const context = vm.createContext({
-        ...constants, ...converters, ...pdf, ...references, router, URL, AbortController, util, forwardVertexResponse,
+        ...constants, ...converters, ...pdf, ...references, router, express, URL, AbortController, util, forwardVertexResponse,
         API_VERTEX_AI: 'https://aiplatform.googleapis.com', API_MAKERSUITE: 'https://generativelanguage.googleapis.com',
         getConfigValue: (_key, fallback) => fallback,
         getVertexAIAuth: async () => ({ authType: 'full', authHeader: 'Bearer synthetic' }),
@@ -68,7 +68,7 @@ const post = (route, body) => fetch(url + route, { method: 'POST', headers: { 'C
 
 test('real upload and generate routes preserve PDF bytes, merge_tools and tool-only response', async () => {
     const bytes = makePdf('synthetic large document ' + 'x'.repeat(6 * 1024 * 1024));
-    const upload = await post('/upload-pdf', { data: bytes.toString('base64') });
+    const upload = await fetch(url + '/upload-pdf', { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: bytes });
     expect(upload.status).toBe(200);
     const file = await upload.json();
     expect(file.url).toMatch(/^user\/files\//);
@@ -106,4 +106,43 @@ test('upload errors are explicit and never expose local paths', async () => {
     const value = await response.json();
     expect(value.error).toMatch(/PDF upload failed/);
     expect(JSON.stringify(value)).not.toContain(directories.root);
+});
+
+test('legacy base64 PDF uploads remain compatible', async () => {
+    const response = await post('/upload-pdf', { data: makePdf().toString('base64') });
+    expect(response.status).toBe(200);
+    expect((await response.json()).pages).toBe(1);
+});
+
+test('oversized binary uploads return a clear 413 and store no file', async () => {
+    const before = await fsp.readdir(directories.files);
+    const response = await fetch(url + '/upload-pdf', { method: 'POST', headers: { 'Content-Type': 'application/pdf' },
+        body: Buffer.alloc(references.NATIVE_PDF_LIMITS.fileBytes + 1) });
+    expect(response.status).toBe(413);
+    expect((await response.json()).error).toBe(references.NATIVE_PDF_SIZE_ERROR);
+    expect(await fsp.readdir(directories.files)).toEqual(before);
+});
+
+test('a chunked upload is bounded even without Content-Length', async () => {
+    const before = await fsp.readdir(directories.files);
+    const chunk = Buffer.alloc(8_000_000);
+    const response = await fetch(url + '/upload-pdf', { method: 'POST', headers: { 'Content-Type': 'application/pdf' },
+        body: Readable.from((function* () { for (let i = 0; i < 7; i++) yield chunk; })()) });
+    expect(response.status).toBe(413);
+    expect((await response.json()).error).toBe(references.NATIVE_PDF_SIZE_ERROR);
+    expect(await fsp.readdir(directories.files)).toEqual(before);
+});
+
+test('disconnecting during a binary upload creates no file or generation', async () => {
+    const before = await fsp.readdir(directories.files);
+    const count = calls.length;
+    await new Promise(resolve => {
+        const req = http.request(url + '/upload-pdf', { method: 'POST', headers: { 'Content-Type': 'application/pdf', 'Content-Length': 2_000_000 } });
+        req.on('error', () => {});
+        req.on('close', resolve);
+        req.write(makePdf());
+        setTimeout(() => req.destroy(), 40);
+    });
+    expect(await fsp.readdir(directories.files)).toEqual(before);
+    expect(calls).toHaveLength(count);
 });

@@ -600,6 +600,20 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 新增 `tests/image-preservation.test.js`，扩展 `google-image-attachments.test.js`：真实 GENERATE_AFTER_DATA 接入、纯文本后处理、多个/相同图片顺序、消息数组替换、PDF 引用/工具元数据、异常清理、损坏引用零提交，以及 addImage → 预设文字转换 → merge_tools → Google inlineData。相关四套共 42 项通过，新增接入与转换再次定向复测 15 项通过；修改 JavaScript ESLint 通过。完整回归在 007B 收尾记录。
 - 本轮不推送 GitHub。私有审查快照只放在已忽略的 `_claude/investigation-20261022/`，不暂存。图片修复与 PDF 上传优化分开提交。用户已明确放弃 150 MB 自动拆分，要求超限提示、自行处理；下一步按此收窄 PDF 范围。
 
+## 007B · 2026-10-23（Asia/Shanghai）· PDF 超限提示、二进制上传与完整验收
+
+- 用户听取 150 MB 需按页拆分的解释后明确选择：“那算了吧，给个警告让我自己处理得了。”因此继续保留原文件 50 MB 上限，不自动拆分、压缩、转格式或转交云存储；不因拒绝拆分而取消本轮图片修复。
+- 再次核对 [Google 文档输入规格](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/document-understanding) 和 [Argon 模型规格](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon?hl=zh-cn)：PDF 的 API/Cloud Storage 单文件限制仍为 50 MB。Context7 查询官方 Google Gen AI JavaScript SDK 文档确认 files.upload 不支持 Vertex，不能通过 AI Studio Files API 绕过限制。50 MB 约等于 47.7 MiB；本地此前的合计 100 MB / 编码请求 140 MB 等约束继续保留。
+- `public/scripts/native-pdf.js` 增加统一超限说明；`chats.js` 在选择过大 PDF 时立即警告，原生上传前再次检查整批文件，提示自行压缩/拆分或使用提取文本。单文件检查先于合计检查，150 MB 不再只报“合计超过 100 MB”。增加简繁中文翻译。资料库/文本提取原路径不改。
+- 原生 PDF 的浏览器 → 酒馆上传由 Base64 JSON 改为 `application/pdf` 原始 File 请求体。仍发送原有 CSRF 请求头；后端使用已有 Express 的 raw 解析器，最多读取 50,000,000 字节、禁用压缩体膨胀，在同一认证/CSRF 中间件之后处理。`src/native-pdf.js` 接受 Buffer 并沿用原 PDF 解析、页数、独占文件写入和哈希校验；同时兼容旧客户端的 Base64 JSON。超限返回 HTTP 413 和明确说明；损坏/加密等返回原有安全错误，不泄漏本地路径。
+- 此改动去掉浏览器的 Base64 编码和 JSON 大字符串，以及后端对应的解码复制；同一 50 MB 文件由约 66.7 MB 的 Base64 数据减少为 50 MB，约减少四分之一的上传体积。仍需在后端缓冲最多 50 MB 并用 PDF.js 解析，**不是磁盘流式上传或断点续传，也不保证网络不会失败**。酒馆 → Google 继续使用现有 inlineData/HTTP2 请求，无新增请求重试、PING 修改或认证策略修改。
+- 定向 PDF 回归 3 套 23 项全部通过：实际 raw 上传路由保留约 6 MiB PDF 字节、原生成路由与完整工具回复；旧 Base64 客户端兼容；50 MB + 1 字节 HTTP413；无 Content-Length 的分块请求超限同样拒绝；中途断开不产生文件或生成请求；前端 150 MB 在读取/上传前停止并解释原因，选择时警告；既有精确 50 MB、千页、密码/损坏/跨用户/总量测试通过。
+- 使用 Playwright 技能运行独立 Chrome 页面：使用生产 GENERATE_AFTER_DATA 代码块、图片保护模块、当前保存的实际后处理脚本，以及生产 populateFileAttachment 和上传路由。纯合成输入的结果为：原脚本丢失 1 张图片，保护后保留 1 张；6,292,326 字节 PDF 成功原样上传、1 页，浏览器 Base64 转换 0 次、Google 调用 0 次；控制台 0 错误/警告。其他酒馆页面依赖为隔离桩，不等同于用户真实页面、主题或全套扩展实测。浏览器只操作本轮测试页，没有刷新或停止用户酒馆。首次工具命令猜测了不存在的 Git Bash 路径，改用 Get-Command 确认的 D:/Git 后正常运行。
+- 独立浏览器与本地测试服务已关闭；测试临时 PDF 目录以及本轮 output/playwright 中的三份临时源码/快照经绝对路径核验后清理。私有脚本审查快照仍仅在被忽略的 `_claude` 中，未暂存。
+- 最终完整单元回归 **30 套件，539 项通过，1 项可选 65 秒慢测试跳过，9.905 秒**。传输层没有改动，未再次执行该慢测试。所有本轮修改 JavaScript 的 ESLint、简繁翻译 JSON 解析及 git diff --check 通过。没有 Google 实际生成/计费请求，因此实际识图质量、Google 对用户 PDF 的接受率和 TUN 长请求稳定性仍需正常使用验证。
+- Git：继承本轮开始后完成的部署文档提交 `ff8c92620`，使用独立分支 `codex/image-preset-attachments`；图片修复为 `2d8b2bcb1`，本节随 PDF 修复另行提交。只暂存所列源码、合成测试、翻译及本日志；不提交私有配置、脚本、聊天、密钥或第三方扩展；本轮不推送远端。
+- 下一步：结束当前生成后重启电脑酒馆后端并刷新页面，保持图片内联开启，用一张图正常测试。新的原生 Vertex 请求摘要 `inlineImages` 应大于 0，可据此区分“文件没进入请求”与“已发送但模型未正确识别”；若是 0 或保护报错，保留那一次错误及摘要继续追踪，不自动重发。PDF 超过 50 MB 时由用户自行处理。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

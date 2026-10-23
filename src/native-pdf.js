@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { NATIVE_PDF_LIMITS, getNativePdfReferences, assertNativePdfReferences } from '../public/scripts/native-pdf.js';
+import { NATIVE_PDF_LIMITS, NATIVE_PDF_SIZE_ERROR, getNativePdfReferences, assertNativePdfReferences } from '../public/scripts/native-pdf.js';
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -28,14 +28,19 @@ async function inspectPdf(bytes) {
     }
 }
 
-/** @param {object} directories @param {string} data @returns {Promise<object>} Safe attachment metadata */
+/** @param {object} directories @param {Buffer|string} data Original bytes or legacy base64 @returns {Promise<object>} Safe attachment metadata */
 export async function storeNativePdf(directories, data) {
-    if (typeof data !== 'string' || data.length > Math.ceil(NATIVE_PDF_LIMITS.fileBytes / 3) * 4
-        || data.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(data)) {
-        throw new Error('Invalid or oversized PDF upload.');
+    let bytes;
+    if (Buffer.isBuffer(data)) {
+        bytes = data;
+    } else {
+        if (typeof data !== 'string') throw new Error('Invalid PDF upload.');
+        if (data.length > Math.ceil(NATIVE_PDF_LIMITS.fileBytes / 3) * 4) throw new Error(NATIVE_PDF_SIZE_ERROR);
+        if (data.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(data)) throw new Error('Invalid PDF encoding.');
+        bytes = Buffer.from(data, 'base64');
+        if (bytes.toString('base64') !== data) throw new Error('Invalid PDF encoding.');
     }
-    const bytes = Buffer.from(data, 'base64');
-    if (bytes.toString('base64') !== data) throw new Error('Invalid PDF encoding.');
+    if (bytes.length > NATIVE_PDF_LIMITS.fileBytes) throw new Error(NATIVE_PDF_SIZE_ERROR);
     const pages = await inspectPdf(bytes);
     const id = randomUUID();
     const filename = `native-pdf-${id}.pdf`;
