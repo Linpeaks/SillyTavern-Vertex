@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { expect, jest, test } from '@jest/globals';
+import { preserveImageParts } from '../public/scripts/image-preservation.js';
 
 jest.unstable_mockModule('../src/util.js', () => ({
     getConfigValue: (_key, fallback) => fallback,
@@ -49,6 +50,9 @@ test('a stored image reaches Google inlineData through the actual message and me
     expect(context.message.content[1].image_url.url).toBe(dataUrl);
     const names = { charName: '', userName: '', startsWithGroupName: () => false };
     const messages = [{ role: 'user', content: context.message.content }];
+    await preserveImageParts(() => messages, async () => {
+        messages[0].content = JSON.stringify({ history: messages[0].content.filter(part => part.type === 'text').map(part => part.text).join('\n') });
+    });
     const body = convertGooglePrompt(postProcessPrompt(messages, PROMPT_PROCESSING_TYPE.MERGE_TOOLS, names), 'gemini-4-argon', false, names);
     expect(body.contents[0].parts).toContainEqual({ inlineData: { mimeType: 'image/png', data: bytes.toString('base64') } });
 });

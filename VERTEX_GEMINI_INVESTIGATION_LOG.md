@@ -589,6 +589,17 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 匿名查看 GitHub 页面时发现它优先展示 `.github/readme.md`，根 README 的新安装入口未显示在主页。因此补充 `.github/readme.md` 顶部个人版本说明与同一安装命令，保留后面的原项目归属；此为发布后的文档修正，和本节结果以独立 docs 提交保存并推送。该提交自身哈希不递归写回日志，最终值由 Git 历史查询。
 - 本轮完成源码公开发布与可匿名下载的一键安装入口、持续 Git 管理、手机备份/更新及干净 Linux 启动验收。用户下一步在手机 Termux 运行 README 命令，首次重新配置 API 或按部署文档私下迁移数据；本轮没有代替用户做数据迁移或宣称手机实机已验收。
 
+## 007A · 2026-10-22—23（Asia/Shanghai）· 开关已开启但预设后处理丢图
+
+- 用户反馈图片仍不能被模型看到，并询问 150 MB PDF 与传输优化。补充明确：发生在电脑，能够发送，但模型看不到图片。核对当前保存设置：原生 Vertex Argon、`media_inlining=true`、list 媒体显示、Reborn2.4、merge_tools；因此不能重复归因为图片开关关闭。
+- 当前 SPreset 的 ChatSquash.enabled=false，但 squashed_post_script_enable=true。公开 inject.js 当前 SHA256 为 `c30bca1e9bcbadf1837e61b71884244d066b3bfac763ef82f913e1046a2ad427`，与 003 记录一致；其 GENERATE_AFTER_DATA 事件在不合并聊天时仍调用 postProcessOriginalMessages/runPostScript。当前保存的私有后处理脚本 SHA256 为 `c1af3734395bdd6ecd789a54b9f5bd5e8a327a8dae7a5a1466851cfc5d9c69a8`；contentToText 在纯文本/伪 JSON 转换中丢掉 image_url。没有把私有脚本正文加入 Git。
+- 使用该实际保存脚本、无网络能力的隔离 VM 和纯合成消息复现：输入 1 张图片，原流程剩 0 张；加入本次保护后剩 1 张，URL/数据一致且无临时引用残留，Google 请求数为 0。首次探针把脚本尾分号放入括号表达式导致 SyntaxError，改用变量赋值加载后复现通过，未修改真实脚本。浏览器连接只显示 about:blank，因此这是实际配置/脚本的隔离证据，仍不是当前用户页面网络包或 Google 识图实测。
+- 上轮测试覆盖 addImage → merge_tools → Google，遗漏了更早的 GENERATE_AFTER_DATA 预设事件。本轮补齐该环节，而非重做已确认正常的上传和模型能力开关。
+- 修改 `public/scripts/image-preservation.js`、`public/script.js`：仅对 Google 来源且开启 SPreset 后处理的路径，在此事件期间用随机临时文本引用保护图片，事件结束后按原位置还原原始图片 part。文字继续交给预设；不写入聊天、不修改私人预设/扩展、不在伪 JSON 里塞入 Base64。引用缺失、复制或损坏即在提交前失败，不自动重提请求。
+- `public/scripts/openai.js` 在两个后续提示词事件周围核对已选图片集合，避免再次静默丢图；仅 Google 来源且已有图片时执行。`src/endpoints/backends/chat-completions.js` 的原生 Vertex 请求摘要增加 inlineImages 数量，不打印图像/文件名/URL。完整工具回复和现有 HTTP/2 保活保持原状。
+- 新增 `tests/image-preservation.test.js`，扩展 `google-image-attachments.test.js`：真实 GENERATE_AFTER_DATA 接入、纯文本后处理、多个/相同图片顺序、消息数组替换、PDF 引用/工具元数据、异常清理、损坏引用零提交，以及 addImage → 预设文字转换 → merge_tools → Google inlineData。相关四套共 42 项通过，新增接入与转换再次定向复测 15 项通过；修改 JavaScript ESLint 通过。完整回归在 007B 收尾记录。
+- 本轮不推送 GitHub。私有审查快照只放在已忽略的 `_claude/investigation-20261022/`，不暂存。图片修复与 PDF 上传优化分开提交。用户已明确放弃 150 MB 自动拆分，要求超限提示、自行处理；下一步按此收窄 PDF 范围。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

@@ -83,6 +83,7 @@ import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
 import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
 import { getNativePdfReferences, assertNativePdfReferences, validateNativePdfRequest, estimateNativePdfTokens } from './native-pdf.js';
+import { imagePartSignatures, assertImageParts } from './image-preservation.js';
 
 export {
     openai_messages_count,
@@ -1618,8 +1619,10 @@ export async function prepareOpenAIMessages({
 
     const eventData = { chat, dryRun };
     const nativePdfRefs = getNativePdfReferences(chat);
+    const imageParts = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(oai_settings.chat_completion_source) ? imagePartSignatures(chat) : null;
     await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
     assertNativePdfReferences(nativePdfRefs, chat);
+    if (imageParts?.length) assertImageParts(imageParts, chat);
 
     openai_messages_count = chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
 
@@ -3146,9 +3149,11 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
 
     const model = getChatCompletionModel(oai_settings);
     const nativePdfRefs = getNativePdfReferences(messages);
+    const imageParts = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(oai_settings.chat_completion_source) ? imagePartSignatures(messages) : null;
     const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema });
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
     assertNativePdfReferences(nativePdfRefs, generate_data.messages);
+    if (imageParts?.length) assertImageParts(imageParts, generate_data.messages);
     if (nativePdfRefs.length) generate_data.native_pdf_refs = nativePdfRefs.map(ref => ref.marker);
     validateNativePdfRequest(generate_data);
 

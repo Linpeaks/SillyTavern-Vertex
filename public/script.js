@@ -12,6 +12,7 @@ import {
 } from './lib.js';
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
+import { preserveImageParts } from './scripts/image-preservation.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
 import {
     generateKoboldWithStreaming,
@@ -5315,7 +5316,13 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
     }
 
-    await eventSource.emit(event_types.GENERATE_AFTER_DATA, generate_data, dryRun);
+    const processGenerationData = () => eventSource.emit(event_types.GENERATE_AFTER_DATA, generate_data, dryRun);
+    if (main_api === 'openai' && [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(oai_settings.chat_completion_source)
+        && oai_settings.extensions?.SPreset?.ChatSquash?.squashed_post_script_enable) {
+        await preserveImageParts(() => generate_data.prompt, processGenerationData);
+    } else {
+        await processGenerationData();
+    }
 
     if (dryRun) {
         return Promise.resolve();

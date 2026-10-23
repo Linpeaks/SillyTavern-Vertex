@@ -675,6 +675,7 @@ async function sendMakerSuiteRequest(request, response) {
         model, stream, thinkingConfig: body.generationConfig.thinkingConfig,
         maxOutputTokens: body.generationConfig.maxOutputTokens,
         messages: body.contents.length, tools: body.tools?.length || 0,
+        inlineImages: body.contents.reduce((count, content) => count + content.parts.filter(part => part.inlineData?.mimeType?.startsWith('image/')).length, 0),
     } : body);
 
     const controller = new AbortController();
