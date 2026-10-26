@@ -2466,7 +2466,9 @@ export function initChatUtilities() {
         await handleFileAttach(Array.from(event.clipboardData.files));
     });
 
-    new DragAndDropHandler('#form_sheld', async (files) => {
+    // Drops in the conversation belong to message attachments as well.
+    // The delegated handler stops them before the body character importer.
+    new DragAndDropHandler('#form_sheld, #chat', async (files) => {
         await handleFileAttach(files);
     });
 

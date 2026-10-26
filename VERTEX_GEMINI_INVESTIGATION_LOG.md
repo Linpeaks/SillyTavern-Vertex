@@ -626,6 +626,16 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 本次用户日志 status=200、finishReasons=STOP、toolParts=1、semanticEnd=finish-reason-observed、outcome=eof，没有给出本次 ECONNRESET 证据。textParts=0 与既有完整工具正文工作流一致，不据此自动重发。此次只修图片构造，不更改传输或工具解析。
 - Git：本节与后端修复和上述合成测试独立提交；聊天拖拽变更随后单独提交。下一步完成拖拽验证记录；用户结束生成后需重启后端并刷新页面，在正常使用时观察 inlineImages，真实 Google 识图质量仍未代测。
 
+## 008B · 2026-10-26（Asia/Shanghai）· 聊天区域拖拽附件入口与本轮交付
+
+- 另一处独立问题：`initChatUtilities()` 的附件拖放区域只有输入区 `#form_sheld`；落在消息区 `#chat` 的文件继续冒泡到 body 的角色卡导入器 `processDroppedFiles()`。该导入器允许 PNG/JSON 等角色格式，JPG 因而提示“不支持的文件类型”。不是 JPG 解码失败，也不能用增加角色导入器的 JPG 白名单来解决图片附件。
+- 修改 `public/scripts/chats.js`：同一附件委托处理器覆盖 `#form_sheld, #chat`，复用既有 handleFileAttach、文件去重和附件预览；其事件阻止传播，避免再落入 body 角色导入器。聊天区域外的角色导入入口保留，未改第三方扩展、用户设置或媒体文件。
+- 在真实 Chrome 的独立本地测试页，使用生产 DragAndDropHandler、jQuery、processDroppedFiles、handleFileAttach、isSameFile 和实际注册片段，通过浏览器原生 File/DataTransfer/DragEvent 验证：基线 JPG 落在消息子元素后 attached=0、warnings=1；修复后消息区 JPG 与输入区 PNG 合计 attached=2，重复 JPG 不增加，warnings=0；聊天区外 PNG 仍走角色导入，imports=1。上传/模型调用均为 0。附件预览/UI 的其他依赖为桩，不冒充完整用户主题及 Google 端到端验收。
+- 最初 Playwright CLI 的 Git Bash 包装器遇到沙箱内核对象权限问题，直接 npx 可运行但独立 Chrome 启动遇到 Crashpad 权限失败；随后通过现有浏览器连接完成只读用户页面检查和独立测试页验证，没有安装浏览器或调整权限。一次测试页导航异常等待较久，恢复后完成后续检查；用户酒馆页没有刷新、发送或更改设置。
+- 本轮最终检查已包含两处源码改动：30 套件、551 项通过、1 项可选传输慢测试跳过；修改的四个 JavaScript 文件 ESLint 和 git diff --check 通过。未修改 HTTP/2、PING、生成重试、工具正文或 PDF 上限。
+- Git：后端合并修复已提交 `277fa5b91`；本节与聊天拖拽修改单独提交。只暂存这两个任务的源码、合成测试及本日志，不推送远端。忽略目录内保留小型无用户数据的本地复现服务源码；独立验证页已关闭，服务已停止，未停止用户进程。
+- 生效与后续：用户在没有生成运行时重启酒馆后端，并 Ctrl+F5 刷新页面以加载聊天拖拽修复；正常发图后观察摘要 inlineImages（本次所查单图提示词本机构造已由 0 变为 1）。没有为验证重发原始生成或新增 Google 计费请求，实际视觉理解质量仍需正常使用验收；若仍出现问题，应以该次新摘要继续定位。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
