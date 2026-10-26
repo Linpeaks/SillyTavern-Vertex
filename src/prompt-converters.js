@@ -909,26 +909,17 @@ export function mergeMessages(messages, names, { strict = false, placeholders = 
 
     // Check for content tokens and replace them with the actual content objects
     if (contentTokens.size > 0) {
+        // Match the tokens themselves. Splitting only on double newlines loses
+        // media when adjacent text ends in an odd number of newlines.
+        const escapedTokens = Array.from(contentTokens.keys(), token => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const tokenPattern = new RegExp(`(?:\\n\\n)?(${escapedTokens.join('|')})(?:\\n\\n)?`, 'g');
         mergedMessages.forEach((message) => {
             const hasValidToken = Array.from(contentTokens.keys()).some(token => message.content.includes(token));
 
             if (hasValidToken) {
-                const splitContent = message.content.split('\n\n');
-                const mergedContent = [];
-
-                splitContent.forEach((content) => {
-                    if (contentTokens.has(content)) {
-                        mergedContent.push(contentTokens.get(content));
-                    } else {
-                        if (mergedContent.length > 0 && mergedContent[mergedContent.length - 1].type === 'text') {
-                            mergedContent[mergedContent.length - 1].text += `\n\n${content}`;
-                        } else {
-                            mergedContent.push({ type: 'text', text: content });
-                        }
-                    }
-                });
-
-                message.content = mergedContent;
+                message.content = message.content.split(tokenPattern)
+                    .filter(content => content.length > 0)
+                    .map(content => contentTokens.get(content) ?? { type: 'text', text: content });
             }
         });
     }

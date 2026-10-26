@@ -614,6 +614,18 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - Git：继承本轮开始后完成的部署文档提交 `ff8c92620`，使用独立分支 `codex/image-preset-attachments`；图片修复为 `2d8b2bcb1`，本节随 PDF 修复另行提交。只暂存所列源码、合成测试、翻译及本日志；不提交私有配置、脚本、聊天、密钥或第三方扩展；本轮不推送远端。
 - 下一步：结束当前生成后重启电脑酒馆后端并刷新页面，保持图片内联开启，用一张图正常测试。新的原生 Vertex 请求摘要 `inlineImages` 应大于 0，可据此区分“文件没进入请求”与“已发送但模型未正确识别”；若是 0 或保护报错，保留那一次错误及摘要继续追踪，不自动重发。PDF 超过 50 MB 时由用户自行处理。
 
+## 008A · 2026-10-26（Asia/Shanghai）· 定位并修复后端合并消息的换行丢图
+
+- 用户反馈先前多次图片修复仍未解决：拖入聊天显示不支持 JPG，附件上传虽显示图片，模型似乎未识别；提供当前 `88ec4452f` 启动信息和原生 Vertex 摘要 `inlineImages: 0`。本轮按既有图片修复范围继续定位并修正，维护本日志及本地 Git，不推送、不重提原生成、不改私人预设或扩展。基线为 `codex/image-preset-attachments` / `88ec4452f`，已跟踪工作区干净。
+- 当前保存配置和真实 Chrome 页均核实为 Vertex Argon、media_inlining=true、图片支持判断=true、SPreset 后处理开启；浏览器实际加载的 Generate 含此前图片保护逻辑。当天图片消息元数据及物理文件存在，提示词管理器内有 1 张图片。只输出数量、类型和换行边界，不复制或记录聊天正文、图片数据、URL、密钥或工具正文。
+- 关键证据来自用户页面已保存的该次 `itemizedPrompts.rawPrompt`：含 1 张 JPEG data URL，位于预设处理后的 assistant 消息，图片前的文本以单个 LF 结尾。`mergeMessages()` 先把媒体替换为随机 token、用双 LF 连接内容，再按双 LF 切分并对片段精确查 token。原文本末尾的单 LF 使切分后 token 前残留 LF，导致图片未还原，随机 token 被作为文字发送；因此前端的图片完整性检查通过，后端仍可得到 inlineImages=0。此前只测无此换行的合成输入，遗漏了这个后端边界；不能把当前问题再归因为图片开关或浏览器未刷新。
+- 使用用户当前浏览器中的同一份已保存提示词，在浏览器本机分别执行基线和修复后的生产 `postProcessPrompt → convertGooglePrompt`（仅将 Node crypto/config 依赖换成本机浏览器兼容桩，不改转换函数）：基线 contents=24、inlineImages=0，修复后 contents=24、inlineImages=1，与用户日志的条数及丢图摘要吻合。没有将提示词发送给测试服务器或 Google；测试服务器只提供转换模块。该证据证明这份提示词的构造丢图已修正，不代表 Google 对实际图片的视觉识别已验收。
+- 修改 `src/prompt-converters.js`：按经过正则转义的随机 token 本身定位媒体，移除媒体连接时加入的双 LF，保留原文换行；不再依赖切分片段必须恰好等于 token。沿用原图片/音频/视频对象及顺序，不改工具参数、认证、HTTP/2 或重试逻辑。
+- 扩展 `tests/google-image-attachments.test.js`、`tests/google-request.test.js`：先确认旧代码在 LF、CRLF、三个 LF 邻接图片时 3 项失败，再确认修复后通过；覆盖 7 种合并模式、连续/重复图片及音视频顺序、原文换行，以及 Vertex/AI Studio 实际请求处理函数中 JPEG 字节、HIGH 思考和完整工具回复。所有输入均为合成数据，上游为桩。
+- 完整回归最终为 **30 套件、551 项通过、1 项可选慢测试跳过，10.638 秒**。第一次 9 项失败是沙箱临时目录原子 rename 的 EPERM；换仓库内临时目录时曾从仓库根目录启动，3 项旧测试因依赖 tests 工作目录而失败；最终从 tests 目录配合 `_claude/investigation-20261026/tmp` 重跑全部通过，没有修改这些测试或生产文件写入逻辑。首次 ESLint 命令误用根目录未安装的运行器，改用 tests/node_modules 中现有运行器，四个本轮 JS 文件均通过；git diff --check 通过。
+- 本次用户日志 status=200、finishReasons=STOP、toolParts=1、semanticEnd=finish-reason-observed、outcome=eof，没有给出本次 ECONNRESET 证据。textParts=0 与既有完整工具正文工作流一致，不据此自动重发。此次只修图片构造，不更改传输或工具解析。
+- Git：本节与后端修复和上述合成测试独立提交；聊天拖拽变更随后单独提交。下一步完成拖拽验证记录；用户结束生成后需重启后端并刷新页面，在正常使用时观察 inlineImages，真实 Google 识图质量仍未代测。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

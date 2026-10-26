@@ -57,6 +57,30 @@ test('a stored image reaches Google inlineData through the actual message and me
     expect(body.contents[0].parts).toContainEqual({ inlineData: { mimeType: 'image/png', data: bytes.toString('base64') } });
 });
 
+for (const newline of ['\n', '\r\n', '\n\n\n']) test(`merge_tools preserves a preset image beside ${JSON.stringify(newline)}`, async () => {
+    const data = Buffer.from('synthetic-image-bytes').toString('base64');
+    const image = { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${data}` } };
+    const messages = [{ role: 'user', content: 'synthetic question' },
+        { role: 'assistant', content: [{ type: 'text', text: `before${newline}` }, image, { type: 'text', text: `${newline}after` }] }];
+    const names = { charName: '', userName: '', startsWithGroupName: () => false };
+    const merged = postProcessPrompt(messages, PROMPT_PROCESSING_TYPE.MERGE_TOOLS, names);
+    expect(merged[1].content).toEqual([{ type: 'text', text: `before${newline}` }, image, { type: 'text', text: `${newline}after` }]);
+    const body = convertGooglePrompt(merged, 'gemini-4-argon', false, names);
+    expect(body.contents.flatMap(content => content.parts).filter(part => part.inlineData)).toEqual([
+        { inlineData: { mimeType: 'image/jpeg', data } },
+    ]);
+});
+
+for (const mode of ['merge', 'merge_tools', 'semi', 'semi_tools', 'strict', 'strict_tools', 'single']) test(`${mode} preserves consecutive media, whitespace and their order`, () => {
+    const media = ['image', 'video', 'audio', 'image'].map(type => ({ type: `${type}_url`, [`${type}_url`]: { url: `data:${type}/synthetic;base64,c3ludGhldGlj` } }));
+    const names = { charName: '', userName: '', startsWithGroupName: () => false };
+    const messages = [{ role: 'user', content: [{ type: 'text', text: 'before\n' }, ...media.slice(0, 2)] },
+        { role: 'user', content: [...media.slice(2), { type: 'text', text: '\nafter' }] }];
+    const merged = postProcessPrompt(messages, mode, names);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].content).toEqual([{ type: 'text', text: 'before\n' }, ...media, { type: 'text', text: '\nafter' }]);
+});
+
 for (const enabled of [true, false]) test(`an unsupported image attachment warns once per batch and preserves settings (enabled=${enabled})`, () => {
     // Execute the upload preflight up to the first conversion/upload, using real source.
     const fn = attachmentSource.match(/^export async function populateFileAttachment\([^]*?^}/m)[0];

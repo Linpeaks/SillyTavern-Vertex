@@ -67,6 +67,27 @@ async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, 
 }
 
 describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', sourceName => {
+    test('preserves preset images after merging and builds one native Google image part', async () => {
+        const data = Buffer.from('synthetic-image-bytes').toString('base64');
+        const messages = converters.postProcessPrompt([
+            { role: 'user', content: 'synthetic question' },
+            { role: 'assistant', content: [{ type: 'text', text: 'before\n' },
+                { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${data}` } }, { type: 'text', text: 'after' }] },
+        ], 'merge_tools', { charName: '', userName: '', startsWithGroupName: () => false });
+        const part = { functionCall: { name: 'emit_story', args: { body: 'synthetic answer' } }, thoughtSignature: 'synthetic' };
+        const { body, response } = await makeRequest(sourceName, 'high', true, {
+            messages,
+            tools: [{ type: 'function', function: { name: 'emit_story', parameters: { type: 'object', properties: { body: { type: 'string' } } } } }],
+            tool_choice: 'required',
+        }, { candidates: [{ content: { parts: [part] }, finishReason: 'STOP' }] });
+        expect(body.contents.flatMap(content => content.parts).filter(part => part.inlineData)).toEqual([
+            { inlineData: { mimeType: 'image/jpeg', data } },
+        ]);
+        expect(body.generationConfig.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: 'HIGH' });
+        expect(body.toolConfig.functionCallingConfig).toEqual({ mode: 'ANY' });
+        expect(response.value.responseContent.parts).toEqual([part]);
+    });
+
     test.each([
         ['auto', undefined], ['min', 'LOW'], ['low', 'LOW'],
         ['medium', 'MEDIUM'], ['high', 'HIGH'], ['max', 'HIGH'],
