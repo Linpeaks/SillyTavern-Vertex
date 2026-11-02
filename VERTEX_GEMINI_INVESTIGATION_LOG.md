@@ -651,6 +651,17 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 使用建议：两批任务独立时，优先新聊天或只带本批相关原图；需要跨批比较时保留两批并明确组别及编号。保留当前聊天时可明确提示只分析本条消息新上传的 10 张、按本轮 1—10 编号；这可指导任务范围，但不会让旧图退出请求。若未来实现“只带最近一轮原图，旧图保留文字摘要”，需另行作为功能修改，本轮不自动实施。
 - Git：起点 `40defa74a`，工作区已跟踪内容干净；本轮仅提交说明日志，不推送。无业务改动，无需新增测试。
 
+## 009 · 2026-11-02 20:14（Asia/Singapore，UTC+08:00）· Windows 桌面启动脚本与动漫图标
+
+- 用户请求：给酒馆制作与桌面其他工具相同用途的启动脚本和图标。核实安装目录为 `D:\AIsoftware\SillyTavern`；开始分支 `codex/image-preset-attachments`，HEAD `9cedcceef`，已跟踪及未跟踪工作区均干净。桌面现有快捷方式使用独立启动脚本与动漫贴纸 ICO，AiNiee 快捷方式以最小化控制台启动。
+- 新增 `SillyTavern.bat`、`launcher/launch-sillytavern.ps1`：从脚本位置解析项目，检查 Node.js 20+、现有依赖及配置，直接以 production 启动当前 `server.js`，浏览器交由应用在服务就绪后打开。原始 `Start.bat` 每次执行 npm install；新增日常入口不安装依赖或更新源码，缺少依赖时提示使用原始入口。未修改原始启动脚本、业务源码、配置、用户数据、第三方扩展、预设或生成重试策略。
+- 通过 `/version` 的 SillyTavern agent 标识识别已运行实例；按项目路径生成 Windows 本地命名互斥锁，避免重复点击和同时启动创建多个服务。身份不明的占用端口只报错，不结束进程。启动控制台保持与 Node 子进程关联，快捷方式以最小化方式启动，用户可还原查看日志并按 Ctrl+C 停止。增加 `-Check` 只读环境诊断和 `-NoBrowser` 启动选项。
+- 新增 `launcher/sillytavern.ico`、`launcher/README.md`。图标使用内置 imagegen 生成原创白发紫眼动漫酒馆女招待、木杯及粉色聊天气泡，透明白边贴纸风格；PNG 保留于本轮输出目录，仅将包含 16/24/32/48/64/128/256 像素的 ICO 纳入仓库。新建用户桌面 `酒馆 SillyTavern.lnk`，目标为根目录 BAT，工作目录为本仓库，图标指向上述 ICO，WindowStyle=7；无同名文件覆盖。
+- 验证：PowerShell 语法解析通过；安装后实际 BAT `-Check` 返回 Node v26.1.0、依赖存在、地址 `http://127.0.0.1:8000/`。用安装后的 PowerShell 脚本和 `-NoBrowser` 实际启动，约 8.41 秒就绪，`/version` 返回 1.19.0，首页 HTTP 200 且 title=SillyTavern；再次运行根目录 BAT `-NoBrowser` 成功复用同一 Node PID，进程数保持 1。ICO 的 RGBA alpha 范围为 0–255，7 种尺寸完整，256 像素预览已目视检查。快捷方式保存后重新读取目标、工作目录、图标和窗口状态，均一致。
+- 验证范围：启动与复用使用真实本地服务，未打开用户浏览器、未进行模型生成或修改聊天内容；桌面资源管理器实际双击及真实浏览器自动拉起未单独操作。未重跑无关的模型/附件全套测试。自签 HTTPS、鉴权开启情况下的重复启动身份识别未实测，说明中已注明限制。
+- 工具与清理：普通沙箱 Git 读取曾报 Permission denied，按授权通过提升执行的只读命令完成核查。测试清理首次因 PowerShell 将 JSON ISO 时间自动解析为 DateTime、与字符串比较不等而安全中止；核查 UTC 时间与父子命令后改按 UTC ticks 比较，仅结束本轮创建的测试 Node/PowerShell 进程，最终 8000 端口无监听。此问题只在临时验证命令，不属于交付脚本。
+- Git：只暂存以上 4 个新增文件及本日志，创建聚焦本地提交 `feat: add Windows desktop launcher and tavern icon`，不推送。最终 `git diff --check`/暂存检查通过；本次提交号可由本节所属提交查询。后续直接双击桌面快捷方式正常使用，无需更改现有设置。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
