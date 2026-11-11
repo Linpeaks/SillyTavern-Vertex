@@ -8,7 +8,7 @@ const functions = ['populateFileAttachment', 'appendFileContent'].map(name => so
 const file = { id: '00000000-0000-0000-0000-000000000001', sha256: '1'.repeat(64), pages: 2,
     size: 100, url: 'user/files/synthetic.pdf', name: '中文图表.pdf', mode: 'native' };
 
-function fixture() {
+function fixture(model = 'gemini-4-argon') {
     class Input { files = [{ type: 'application/pdf', name: '中文图表.pdf', size: 100 }]; }
     const input = new Input();
     const fetch = jest.fn(async () => ({ ok: true, json: async () => ({ ...file }) }));
@@ -19,7 +19,7 @@ function fixture() {
     const context = vm.createContext({
         ...references, HTMLInputElement: Input, document: { getElementById: () => input },
         $: () => ({ val: () => 'native', trigger: reset }),
-        main_api: 'openai', oai_settings: { chat_completion_source: 'vertexai', vertexai_model: 'gemini-4-argon' },
+        main_api: 'openai', oai_settings: { chat_completion_source: 'vertexai', vertexai_model: model },
         fetch, getFileAttachment, deleteFileFromServer, getBase64Async,
         getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'synthetic' }),
         t: strings => strings[0], translate: value => value, toastr: { error() {} },
@@ -38,8 +38,8 @@ test('native references retain filename and coexist with unchanged text attachme
     expect(await f.context.appendFileContent(message, 'question')).not.toContain('ST_NATIVE_PDF');
 });
 
-test('native upload keeps only metadata in chat and resets mode via the form', async () => {
-    const f = fixture();
+for (const model of ['gemini-4-argon', 'gemini-4-carbon']) test(`${model} native upload keeps only metadata in chat and resets mode via the form`, async () => {
+    const f = fixture(model);
     const message = { is_user: true, extra: {} };
     await f.context.populateFileAttachment(message);
     expect(f.fetch).toHaveBeenCalledTimes(1);

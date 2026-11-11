@@ -3311,6 +3311,9 @@
                             <div>
                                 <h4 data-i18n="Google Model">Google Model</h4>
                                 <select id="model_google_select">
+                                    <optgroup label="Gemini 4">
+                                        <option value="gemini-4-carbon">gemini-4-carbon</option>
+                                    </optgroup>
                                     <optgroup label="Gemini 3.7">
                                         <option value="gemini-3.7-flash">gemini-3.7-flash</option>
                                     </optgroup>
@@ -3455,6 +3458,8 @@
 
                                 <datalist id="vertexai_region_suggestions">
                                     <option value="global">global</option>
+                                    <option value="us">us</option>
+                                    <option value="eu">eu</option>
                                     <option value="us-central1">us-central1</option>
                                     <option value="us-east1">us-east1</option>
                                     <option value="us-east4">us-east4</option>
@@ -3481,6 +3486,9 @@
                                 <h4 data-i18n="Google Model">Google Model</h4>
                                 <select id="model_vertexai_select">
                                     <!-- data-mode="full" is for models that require a service account -->
+                                    <optgroup label="Gemini 4">
+                                        <option value="gemini-4-carbon">gemini-4-carbon</option>
+                                    </optgroup>
                                     <optgroup label="Gemini 3.7">
                                         <option value="gemini-3.7-flash">gemini-3.7-flash</option>
                                     </optgroup>
@@ -8098,7 +8106,7 @@
                             PDF
                             <select id="pdf_attachment_mode" aria-label="PDF attachment mode">
                                 <option value="text" data-i18n="Extract text">Extract text</option>
-                                <option value="native" data-i18n="Original PDF (Vertex Argon)">Original PDF (Vertex Argon)</option>
+                                <option value="native" data-i18n="Original PDF (Vertex Gemini 4)">Original PDF (Vertex Gemini 4)</option>
                             </select>
                         </label>
                         <button id="file_form_reset" type="reset" class="menu_button" title="Remove the file" data-i18n="[title]Remove the file">

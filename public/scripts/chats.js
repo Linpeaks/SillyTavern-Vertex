@@ -58,7 +58,7 @@ import { t, translate } from './i18n.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './constants.js';
-import { nativePdfMarker, NATIVE_PDF_LIMITS, NATIVE_PDF_SIZE_ERROR, supportsNativePdf } from './native-pdf.js';
+import { nativePdfMarker, NATIVE_PDF_LIMITS, NATIVE_PDF_SIZE_ERROR, NATIVE_PDF_CONNECTION_ERROR, supportsNativePdf } from './native-pdf.js';
 import { isImageInliningSupported, oai_settings } from './openai.js';
 
 /**
@@ -232,7 +232,7 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
         for (const file of fileInput.files) {
             if (nativePdf && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name))) {
                 if (main_api !== 'openai' || !supportsNativePdf(oai_settings)) {
-                    throw new Error('Original PDFs require native Vertex AI with gemini-4-argon. Select Extract text for other connections.');
+                    throw new Error(translate(NATIVE_PDF_CONNECTION_ERROR));
                 }
                 if (!message.is_user) throw new Error('Attach original PDFs to user messages.');
                 const response = await fetch('/api/files/upload-pdf', {
@@ -431,7 +431,7 @@ async function onFileAttach(fileList) {
     $('#file_form .file_name').text(name).attr('title', title);
     $('#file_form .file_size').text(humanFileSize(size)).attr('title', size);
     $('#pdf_attachment_mode_label').toggleClass('displayNone', ![...fileList].some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)))
-        .attr('title', `Original PDF: native Vertex Argon; ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file, ${NATIVE_PDF_LIMITS.files} files / ${NATIVE_PDF_LIMITS.pages} pages / ${NATIVE_PDF_LIMITS.totalBytes / 1e6} MB per request. Context estimate: ${NATIVE_PDF_LIMITS.estimatedTokensPerPage} tokens/page; actual usage may differ.`);
+        .attr('title', `Original PDF: native Vertex Gemini 4 Argon or Carbon; ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file, ${NATIVE_PDF_LIMITS.files} files / ${NATIVE_PDF_LIMITS.pages} pages / ${NATIVE_PDF_LIMITS.totalBytes / 1e6} MB per request. Context estimate: ${NATIVE_PDF_LIMITS.estimatedTokensPerPage} tokens/page; actual usage may differ.`);
     $('#file_form').removeClass('displayNone');
 
     // Reset form on chat change (if not on a welcome screen)
@@ -552,7 +552,7 @@ function embedMessageFile(messageId, messageBlock) {
         e.target.dataset.pdfMode = 'text';
         if ([...e.target.files].some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name))) {
             const select = $('<select>').append($('<option>').val('text').text(t`Extract text`),
-                $('<option>').val('native').text(t`Original PDF (Vertex Argon)`));
+                $('<option>').val('native').text(t`Original PDF (Vertex Gemini 4)`));
             const result = await callGenericPopup($('<div>').append($('<p>').text(`PDF attachment mode (original: ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file, ${NATIVE_PDF_LIMITS.pages} pages total; context token limits also apply)`)).append(select), POPUP_TYPE.CONFIRM);
             if (result !== POPUP_RESULT.AFFIRMATIVE) { e.target.value = ''; return; }
             e.target.dataset.pdfMode = String(select.val());
@@ -581,7 +581,7 @@ export async function appendFileContent(message, messageText) {
         const fileTexts = [];
         for (const file of message.extra.files) {
             if (file.mode === 'native') {
-                if (main_api !== 'openai') throw new Error('Original PDFs require Chat Completion with native Vertex Argon. Reattach using text extraction.');
+                if (main_api !== 'openai') throw new Error(translate(NATIVE_PDF_CONNECTION_ERROR));
                 fileTexts.push(`${file.name}\n${nativePdfMarker(file)}`);
                 continue;
             }

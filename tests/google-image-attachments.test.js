@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { expect, jest, test } from '@jest/globals';
-import { preserveImageParts } from '../public/scripts/image-preservation.js';
+import { getGoogleProtectedMediaTypes, preserveMediaParts } from '../public/scripts/media-preservation.js';
+import * as geminiModels from '../public/scripts/gemini-models.js';
 
 jest.unstable_mockModule('../src/util.js', () => ({
     getConfigValue: (_key, fallback) => fallback,
@@ -13,9 +14,9 @@ const attachmentSource = fs.readFileSync(new URL('../public/scripts/chats.js', i
 
 function fixture(sourceName = 'vertexai') {
     const settings = { chat_completion_source: sourceName, vertexai_model: 'gemini-4-argon', google_model: 'gemini-4-argon', media_inlining: true };
-    const context = vm.createContext({ main_api: 'openai', oai_settings: settings,
+    const context = vm.createContext({ ...geminiModels, main_api: 'openai', oai_settings: settings,
         chat_completion_sources: { VERTEXAI: 'vertexai', MAKERSUITE: 'makersuite' } });
-    vm.runInContext(source.match(/^export function isImageInliningSupported\([^]*?^}/m)[0].replace('export ', ''), context);
+    vm.runInContext(source.match(/^export function is(?:Image|Video|Audio)InliningSupported\([^]*?^}/gm).join('\n').replace(/^export /gm, ''), context);
     return { settings, context };
 }
 
@@ -27,6 +28,36 @@ for (const sourceName of ['vertexai', 'makersuite']) test(`Argon images require 
     settings.media_inlining = true;
     context.main_api = 'textgenerationwebui';
     expect(context.isImageInliningSupported()).toBe(false);
+});
+
+for (const sourceName of ['vertexai', 'makersuite']) test(`Carbon enables image, audio and video on ${sourceName} only with inline media`, () => {
+    const { settings, context } = fixture(sourceName);
+    settings.google_model = settings.vertexai_model = 'gemini-4-carbon';
+    const capabilities = () => [context.isImageInliningSupported(), context.isAudioInliningSupported(), context.isVideoInliningSupported()];
+    expect(capabilities()).toEqual([true, true, true]);
+    settings.media_inlining = false;
+    expect(capabilities()).toEqual([false, false, false]);
+    settings.media_inlining = true;
+    settings.google_model = settings.vertexai_model = 'gemini-4-carbon-unknown';
+    expect(capabilities()).toEqual([false, false, false]);
+});
+
+test('Carbon image, audio and video survive a text-only preset and become Google inlineData', async () => {
+    const attachments = [
+        ['image', 'image/png'],
+        ['audio', 'audio/wav'],
+        ['video', 'video/mp4'],
+    ].map(([type, mimeType]) => ({ type: `${type}_url`, [`${type}_url`]: { url: `data:${mimeType};base64,c3ludGhldGlj` } }));
+    const messages = [{ role: 'user', content: [{ type: 'text', text: 'question\n' }, ...attachments] }];
+    await preserveMediaParts(() => messages, async () => {
+        messages[0].content = JSON.stringify({ history: messages[0].content.filter(part => part.type === 'text').map(part => part.text).join('\n') });
+    }, getGoogleProtectedMediaTypes('gemini-4-carbon'));
+    const names = { charName: '', userName: '', startsWithGroupName: () => false };
+    const merged = postProcessPrompt(messages, PROMPT_PROCESSING_TYPE.MERGE_TOOLS, names);
+    const body = convertGooglePrompt(merged, 'gemini-4-carbon', false, names);
+    expect(body.contents.flatMap(content => content.parts).filter(part => part.inlineData)).toEqual(
+        ['image/png', 'audio/wav', 'video/mp4'].map(mimeType => ({ inlineData: { mimeType, data: 'c3ludGhldGlj' } })),
+    );
 });
 
 test('existing supported models remain supported without enabling arbitrary future models', () => {
@@ -50,7 +81,7 @@ test('a stored image reaches Google inlineData through the actual message and me
     expect(context.message.content[1].image_url.url).toBe(dataUrl);
     const names = { charName: '', userName: '', startsWithGroupName: () => false };
     const messages = [{ role: 'user', content: context.message.content }];
-    await preserveImageParts(() => messages, async () => {
+    await preserveMediaParts(() => messages, async () => {
         messages[0].content = JSON.stringify({ history: messages[0].content.filter(part => part.type === 'text').map(part => part.text).join('\n') });
     });
     const body = convertGooglePrompt(postProcessPrompt(messages, PROMPT_PROCESSING_TYPE.MERGE_TOOLS, names), 'gemini-4-argon', false, names);

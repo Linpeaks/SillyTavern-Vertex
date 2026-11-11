@@ -71,6 +71,7 @@ import { getCookieSecret } from '../../users.js';
 import { fetchGoogleModels, GoogleModelsHttpError } from './google-models.js';
 import { fetchVertexHttp2, forwardVertexResponse, getVertexHttp2Proxy } from '../../vertex-http2.js';
 import { validateNativePdfRequest, assertNativePdfReferences } from '../../../public/scripts/native-pdf.js';
+import { GEMINI_4_CARBON, isGemini4Model, limitCarbonOutputTokens } from '../../../public/scripts/gemini-models.js';
 import { resolveNativePdfs } from '../../native-pdf.js';
 
 const API_OPENAI = 'https://api.openai.com/v1';
@@ -490,6 +491,12 @@ async function sendMakerSuiteRequest(request, response) {
 
     const model = String(request.body.model);
     const stream = Boolean(request.body.stream);
+    const isCarbon = model === GEMINI_4_CARBON;
+    const region = request.body.vertexai_region || (isCarbon ? 'global' : 'us-central1');
+    const carbonMultiRegion = isCarbon && (region === 'us' || region === 'eu');
+    if (useVertexAi && authType !== 'proxy' && isCarbon && region !== 'global' && !carbonMultiRegion) {
+        return response.status(400).send({ error: true, message: 'Gemini 4 Carbon on Vertex AI requires the global, us, or eu region.' });
+    }
     const enableWebSearch = Boolean(request.body.enable_web_search);
     const requestImages = Boolean(request.body.request_images);
     const reasoningEffort = String(request.body.reasoning_effort);
@@ -505,7 +512,7 @@ async function sendMakerSuiteRequest(request, response) {
     const generationConfig = {
         stopSequences: request.body.stop,
         candidateCount: 1,
-        maxOutputTokens: request.body.max_tokens,
+        maxOutputTokens: isCarbon ? limitCarbonOutputTokens(request.body.max_tokens, stream) : request.body.max_tokens,
         temperature: request.body.temperature,
         topP: request.body.top_p,
         topK: request.body.top_k || undefined,
@@ -526,10 +533,10 @@ async function sendMakerSuiteRequest(request, response) {
             'gemini-3.1-flash-image',
         ];
 
-        const isThinkingConfigModel = m => m === 'gemini-4-argon' || (/^gemini-2.5-(flash|pro)/.test(m) && !/-image(-preview)?$/.test(m)) || (/^gemini-3[.\d]*-(flash|pro)/.test(m));
+        const isThinkingConfigModel = m => isGemini4Model(m) || (/^gemini-2.5-(flash|pro)/.test(m) && !/-image(-preview)?$/.test(m)) || (/^gemini-3[.\d]*-(flash|pro)/.test(m));
         const isImageSizeModel = m => /^gemini-3/.test(m);
         // https://ai.google.dev/gemini-api/docs/latest-model#api-changes-and-parameter-updates
-        const noSamplingModel = /gemini-3\.[67]-flash|gemini-3\.5-flash-lite/.test(model);
+        const noSamplingModel = isCarbon || /gemini-3\.[67]-flash|gemini-3\.5-flash-lite/.test(model);
 
         const noSearchModels = [
             'gemini-2.0-flash-lite',
@@ -711,16 +718,19 @@ async function sendMakerSuiteRequest(request, response) {
         };
 
         if (useVertexAi) {
+            const multiRegionHost = carbonMultiRegion ? `https://aiplatform.${region}.rep.googleapis.com` : null;
             if (authType === 'express') {
                 // For Express mode (API key authentication), use the key parameter
                 const keyParam = authHeader.replace('Bearer ', '');
-                const region = request.body.vertexai_region || 'us-central1';
                 const projectId = request.body.vertexai_express_project_id;
+                if (multiRegionHost && !projectId) {
+                    return response.status(400).send({ error: true, message: 'Gemini 4 Carbon on Vertex AI requires a project ID for the us or eu region. Enter a project ID or select global.' });
+                }
                 const baseUrl = region === 'global'
                     ? 'https://aiplatform.googleapis.com'
                     : `https://${region}-aiplatform.googleapis.com`;
                 url = projectId
-                    ? `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${responseType}?key=${keyParam}${stream ? '&alt=sse' : ''}`
+                    ? `${multiRegionHost || 'https://aiplatform.googleapis.com'}/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${responseType}?key=${keyParam}${stream ? '&alt=sse' : ''}`
                     : `${baseUrl}/v1/publishers/google/models/${model}:${responseType}?key=${keyParam}${stream ? '&alt=sse' : ''}`;
             } else if (authType === 'full') {
                 // For Full mode (service account authentication), use project-specific URL
@@ -739,13 +749,8 @@ async function sendMakerSuiteRequest(request, response) {
                     console.error('Failed to extract project ID from Service Account JSON:', error);
                     return response.status(400).send({ error: true });
                 }
-                const region = request.body.vertexai_region || 'us-central1';
-                // Handle global region differently - no region prefix in hostname
-                if (region === 'global') {
-                    url = `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${responseType}${stream ? '?alt=sse' : ''}`;
-                } else {
-                    url = `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${responseType}${stream ? '?alt=sse' : ''}`;
-                }
+                const host = multiRegionHost || (region === 'global' ? 'https://aiplatform.googleapis.com' : `https://${region}-aiplatform.googleapis.com`);
+                url = `${host}/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${responseType}${stream ? '?alt=sse' : ''}`;
                 headers['Authorization'] = authHeader;
             } else {
                 // For proxy mode, use the original URL with Authorization header

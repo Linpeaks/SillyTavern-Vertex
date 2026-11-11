@@ -1,7 +1,8 @@
 {
-    "Vertex AI accepts original PDFs up to 50 MB each. Compress or split the file yourself, or use Extract text. Files are not split automatically.": "Vertex AI 的 PDF 原文件上限为每份 50 MB。请自行压缩或拆分，也可选择“提取文本”；系统不会自动拆分文件。",
+    "SillyTavern accepts original PDFs up to 50 MB each. Compress or split the file yourself, or use Extract text. Files are not split automatically.": "酒馆的 PDF 原文件上限为每份 50 MB。请自行压缩或拆分，也可选择“提取文本”；系统不会自动拆分文件。",
+    "Original PDFs require native Vertex AI with Gemini 4 Argon or Carbon. Select Extract text for other connections.": "发送 PDF 原文件需要通过原生 Vertex AI 连接 Gemini 4 Argon 或 Carbon。使用其他连接时请选择“提取文本”。",
     "Extract text": "提取文本",
-    "Original PDF (Vertex Argon)": "发送 PDF 原文件（Vertex Argon）",
+    "Original PDF (Vertex Gemini 4)": "发送 PDF 原文件（Vertex Gemini 4）",
     "Download original PDF": "下载 PDF 原文件",
     "Could not upload the PDF": "无法上传 PDF",
     "Favorite": "星标",

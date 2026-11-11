@@ -30,7 +30,7 @@ export async function getVertexHttp2Proxy(endpoint, agent = https.globalAgent) {
     const url = new URL(endpoint);
     if (url.protocol !== 'https:' || url.username || url.password
         || (url.port && url.port !== '443')
-        || !/^(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com$/.test(url.hostname)) {
+        || !/^(?:(?:[a-z0-9-]+-)?aiplatform|aiplatform\.(?:us|eu)\.rep)\.googleapis\.com$/.test(url.hostname)) {
         return null;
     }
     if (agent instanceof ProxyAgent) {

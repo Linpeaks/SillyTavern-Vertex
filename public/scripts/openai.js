@@ -83,7 +83,8 @@ import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
 import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
 import { getNativePdfReferences, assertNativePdfReferences, validateNativePdfRequest, estimateNativePdfTokens } from './native-pdf.js';
-import { imagePartSignatures, assertImageParts } from './image-preservation.js';
+import { getGoogleProtectedMediaTypes, mediaPartSignatures, assertMediaParts } from './media-preservation.js';
+import { GEMINI_4_CARBON, GEMINI_4_CONTEXT_LIMIT, isGemini4Model, limitCarbonOutputTokens } from './gemini-models.js';
 
 export {
     openai_messages_count,
@@ -1566,7 +1567,15 @@ export async function prepareOpenAIMessages({
     if (power_user.console_log_prompts) chatCompletion.enableLogging();
 
     const userSettings = promptManager.serviceSettings;
-    chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
+    const model = getChatCompletionModel(userSettings);
+    const googleSource = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(userSettings.chat_completion_source);
+    if (googleSource && model === GEMINI_4_CARBON) {
+        const context = Math.min(userSettings.openai_max_context, GEMINI_4_CONTEXT_LIMIT);
+        const output = limitCarbonOutputTokens(userSettings.openai_max_tokens, userSettings.stream_openai && type !== 'quiet');
+        chatCompletion.setTokenBudget(context, output);
+    } else {
+        chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
+    }
 
     try {
         // Merge markers and ordered user prompts with system prompts
@@ -1619,10 +1628,11 @@ export async function prepareOpenAIMessages({
 
     const eventData = { chat, dryRun };
     const nativePdfRefs = getNativePdfReferences(chat);
-    const imageParts = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(oai_settings.chat_completion_source) ? imagePartSignatures(chat) : null;
+    const protectedMediaTypes = getGoogleProtectedMediaTypes(model);
+    const mediaParts = googleSource ? mediaPartSignatures(chat, protectedMediaTypes) : null;
     await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
     assertNativePdfReferences(nativePdfRefs, chat);
-    if (imageParts?.length) assertImageParts(imageParts, chat);
+    if (mediaParts?.length) assertMediaParts(mediaParts, chat, protectedMediaTypes);
 
     openai_messages_count = chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
 
@@ -2909,6 +2919,9 @@ export async function createGenerationParameters(settings, model, type, messages
     }
 
     if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(settings.chat_completion_source)) {
+        if (model === GEMINI_4_CARBON) {
+            generate_data.max_tokens = limitCarbonOutputTokens(generate_data.max_tokens, stream);
+        }
         const stopStringsLimit = 5;
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.stop = getCustomStoppingStrings(stopStringsLimit).slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
@@ -3149,11 +3162,13 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
 
     const model = getChatCompletionModel(oai_settings);
     const nativePdfRefs = getNativePdfReferences(messages);
-    const imageParts = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(oai_settings.chat_completion_source) ? imagePartSignatures(messages) : null;
+    const protectedMediaTypes = getGoogleProtectedMediaTypes(model);
+    const mediaParts = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(oai_settings.chat_completion_source)
+        ? mediaPartSignatures(messages, protectedMediaTypes) : null;
     const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema });
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
     assertNativePdfReferences(nativePdfRefs, generate_data.messages);
-    if (imageParts?.length) assertImageParts(imageParts, generate_data.messages);
+    if (mediaParts?.length) assertMediaParts(mediaParts, generate_data.messages, protectedMediaTypes);
     if (nativePdfRefs.length) generate_data.native_pdf_refs = nativePdfRefs.map(ref => ref.marker);
     validateNativePdfRequest(generate_data);
 
@@ -5140,6 +5155,10 @@ function getMaxContextOpenAI(value) {
  * @returns {number} Maximum context size in tokens
  */
 function getGeminiMaxContext(model, isUnlocked) {
+    if (model === GEMINI_4_CARBON) {
+        return GEMINI_4_CONTEXT_LIMIT;
+    }
+
     if (isUnlocked) {
         return unlocked_max;
     }
@@ -6324,9 +6343,9 @@ export function isImageInliningSupported() {
             );
         }
         case chat_completion_sources.MAKERSUITE:
-            return oai_settings.google_model === 'gemini-4-argon' || visionSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return isGemini4Model(oai_settings.google_model) || visionSupportedModels.some(model => oai_settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return oai_settings.vertexai_model === 'gemini-4-argon' || visionSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return isGemini4Model(oai_settings.vertexai_model) || visionSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
         case chat_completion_sources.CLAUDE:
             return visionSupportedModels.some(model => oai_settings.claude_model.includes(model));
         case chat_completion_sources.OPENROUTER:
@@ -6399,9 +6418,9 @@ export function isVideoInliningSupported() {
 
     switch (oai_settings.chat_completion_source) {
         case chat_completion_sources.MAKERSUITE:
-            return videoSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return oai_settings.google_model === GEMINI_4_CARBON || videoSupportedModels.some(model => oai_settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return videoSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return oai_settings.vertexai_model === GEMINI_4_CARBON || videoSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
         case chat_completion_sources.OPENROUTER:
             return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('video'));
         case chat_completion_sources.ZAI:
@@ -6441,9 +6460,9 @@ export function isAudioInliningSupported() {
         case chat_completion_sources.OPENAI:
             return audioSupportedModels.some(model => oai_settings.openai_model.includes(model));
         case chat_completion_sources.MAKERSUITE:
-            return audioSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return oai_settings.google_model === GEMINI_4_CARBON || audioSupportedModels.some(model => oai_settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return audioSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return oai_settings.vertexai_model === GEMINI_4_CARBON || audioSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
         case chat_completion_sources.OPENROUTER:
             return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('audio'));
         case chat_completion_sources.CUSTOM:

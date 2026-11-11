@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { beforeAll, describe, expect, jest, test } from '@jest/globals';
 import { Response } from 'node-fetch';
 import * as constants from '../src/constants.js';
+import * as geminiModels from '../public/scripts/gemini-models.js';
 
 jest.unstable_mockModule('../src/util.js', () => ({
     getConfigValue: (_key, fallback) => fallback,
@@ -27,7 +28,7 @@ async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, 
         candidates: [{ content: { parts: [{ text: 'synthetic reply' }] } }],
     }), { status: 200 }));
     const context = vm.createContext({
-        ...constants, ...converters, URL, AbortController, util,
+        ...constants, ...converters, ...geminiModels, URL, AbortController, util,
         API_VERTEX_AI: 'https://aiplatform.googleapis.com',
         API_MAKERSUITE: 'https://generativelanguage.googleapis.com',
         getConfigValue: (_key, fallback) => fallback,
@@ -63,7 +64,7 @@ async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, 
     expect(response.statusCode).toBe(200);
     expect(response.value.error).toBeUndefined();
     expect(response.listenerCount('close')).toBe(0);
-    return { body: JSON.parse(fetchMock.mock.calls[0][1].body), response };
+    return { body: JSON.parse(fetchMock.mock.calls[0][1].body), url: fetchMock.mock.calls[0][0], response };
 }
 
 describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', sourceName => {
@@ -88,16 +89,28 @@ describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', s
         expect(response.value.responseContent.parts).toEqual([part]);
     });
 
-    test.each([
-        ['auto', undefined], ['min', 'LOW'], ['low', 'LOW'],
-        ['medium', 'MEDIUM'], ['high', 'HIGH'], ['max', 'HIGH'],
-    ])('sends the effective Argon %s level with either thoughts setting', async (effort, level) => {
-        for (const includeThoughts of [false, true]) {
-            const { body } = await makeRequest(sourceName, effort, includeThoughts);
-            expect(body.generationConfig.thinkingConfig).toEqual({
-                includeThoughts, ...(level ? { thinkingLevel: level } : {}),
-            });
-            expect(body.generationConfig.thinkingConfig).not.toHaveProperty('thinkingBudget');
+    describe.each(['gemini-4-argon', 'gemini-4-carbon'])('%s thinking levels', model => {
+        test.each([
+            ['auto', undefined], ['min', 'LOW'], ['low', 'LOW'],
+            ['medium', 'MEDIUM'], ['high', 'HIGH'], ['max', 'HIGH'],
+        ])('sends the effective %s level with either thoughts setting', async (effort, level) => {
+            for (const includeThoughts of [false, true]) {
+                const { body } = await makeRequest(sourceName, effort, includeThoughts, { model });
+                expect(body.generationConfig.thinkingConfig).toEqual({
+                    includeThoughts, ...(level ? { thinkingLevel: level } : {}),
+                });
+                expect(body.generationConfig.thinkingConfig).not.toHaveProperty('thinkingBudget');
+            }
+        });
+    });
+
+    test('Carbon non-streaming requests honor the output limit and omit fixed sampling parameters', async () => {
+        const { body } = await makeRequest(sourceName, 'auto', false, {
+            model: 'gemini-4-carbon', max_tokens: 1_048_576, temperature: 0.3, top_p: 0.7, top_k: 12,
+        });
+        expect(body.generationConfig.maxOutputTokens).toBe(32_768);
+        for (const parameter of ['temperature', 'topP', 'topK', 'candidateCount']) {
+            expect(body.generationConfig).not.toHaveProperty(parameter);
         }
     });
 
@@ -121,4 +134,22 @@ describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', s
         expect(body.toolConfig.functionCallingConfig).toEqual({ mode: 'ANY' });
         expect(response.value.responseContent.parts).toEqual([part]);
     });
+});
+
+test.each(['us', 'eu'])('Carbon uses the official Vertex %s multi-region hostname', async region => {
+    const { url } = await makeRequest('vertexai', 'low', false, { model: 'gemini-4-carbon', vertexai_region: region });
+    expect(url).toBe(`https://aiplatform.${region}.rep.googleapis.com/v1/projects/synthetic-project/locations/${region}/publishers/google/models/gemini-4-carbon:generateContent`);
+});
+
+test('Carbon has built-in model options and honors its unified context cap even when unlocked', () => {
+    const index = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+    for (const id of ['model_google_select', 'model_vertexai_select']) {
+        const options = index.split(`<select id="${id}">`)[1].split('</select>')[0];
+        expect(options).toContain('<option value="gemini-4-carbon">gemini-4-carbon</option>');
+    }
+    const frontend = fs.readFileSync(new URL('../public/scripts/openai.js', import.meta.url), 'utf8');
+    const context = vm.createContext({ ...geminiModels, model_list: [{ id: 'gemini-4-carbon', inputTokenLimit: 2_000_000 }] });
+    vm.runInContext(frontend.match(/^function getGeminiMaxContext\([^]*?^}/m)[0], context);
+    expect(context.getGeminiMaxContext('gemini-4-carbon', false)).toBe(1_048_576);
+    expect(context.getGeminiMaxContext('gemini-4-carbon', true)).toBe(1_048_576);
 });

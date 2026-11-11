@@ -411,6 +411,9 @@ describe('Vertex proxy routing and forwarding', () => {
         expect(await getVertexHttp2Proxy('https://aiplatform.googleapis.com.example.com/v1')).toBeNull();
         expect(await getVertexHttp2Proxy('http://aiplatform.googleapis.com/v1')).toBeNull();
         expect(await getVertexHttp2Proxy('https://us-central1-aiplatform.googleapis.com/v1', new https.Agent())).toBe('');
+        expect(await getVertexHttp2Proxy('https://aiplatform.us.rep.googleapis.com/v1', new https.Agent())).toBe('');
+        expect(await getVertexHttp2Proxy('https://aiplatform.eu.rep.googleapis.com/v1', new https.Agent())).toBe('');
+        expect(await getVertexHttp2Proxy('https://aiplatform.asia.rep.googleapis.com/v1', new https.Agent())).toBeNull();
     });
 
     test('forwarding awaits late bytes and maps 401 without resetting browser authentication', async () => {

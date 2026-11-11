@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { getConfigValue, tryParse } from './util.js';
+import { isGemini4Model } from '../public/scripts/gemini-models.js';
 
 const PROMPT_PLACEHOLDER = getConfigValue('promptPlaceholder', 'Let\'s get started.');
 
@@ -1171,8 +1172,8 @@ export function calculateClaudeBudgetTokens(maxTokens, reasoningEffort, stream, 
  * @returns {number|string|null} Budget tokens
  */
 export function calculateGoogleBudgetTokens(maxTokens, reasoningEffort, model) {
-    // Argon uses levels, not a token budget. In particular, Medium must stay Medium.
-    if (model === 'gemini-4-argon') {
+    // Gemini 4 uses levels, and Medium maps directly to MEDIUM.
+    if (isGemini4Model(model)) {
         switch (reasoningEffort) {
             case REASONING_EFFORT.min:
             case REASONING_EFFORT.low:
