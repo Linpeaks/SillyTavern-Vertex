@@ -90,19 +90,21 @@ async function fixture(onStream, { enabled = true, proxy = '', authType = 'full'
     const port = await listen(http.createServer(app));
     return { url: 'http://127.0.0.1:' + port + '/generate', requests, diagnostics, responses, h2, h1, logs };
 }
-function client(url, { stream = true, signal, sourceName = 'vertexai', model = 'gemini-4-argon' } = {}) {
+function client(url, { stream = true, signal, sourceName = 'vertexai', model = 'gemini-4-argon', effort = 'high' } = {}) {
     return fetch(url, {
         method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             chat_completion_source: sourceName, vertexai_region: 'global', model,
-            stream, reasoning_effort: 'high', include_reasoning: true, max_tokens: 65535,
+            stream, reasoning_effort: effort, include_reasoning: true, max_tokens: 65535,
             messages: [{ role: 'user', content: 'synthetic-private-prompt' }],
             tools: [{ type: 'function', function: { name: 'emit_story', parameters: { type: 'object', properties: { body: { type: 'string' } } } } }],
         }),
     });
 }
 
-test.each(['gemini-4-argon', 'gemini-4-carbon'])('%s client -> production handler -> TLS HTTP/2 -> delayed tool-only SSE is complete', async model => {
+test.each([
+    ['gemini-4-argon', 'high', 'HIGH'], ['gemini-4-carbon', 'high', 'HIGH'], ['gemini-4-hydrogen', 'max', 'XHIGH'],
+])('%s client -> production handler -> TLS HTTP/2 -> delayed tool-only SSE is complete', async (model, effort, thinkingLevel) => {
     const data = 'data: ' + JSON.stringify({ candidates: [{ content: { parts: [{
         functionCall: { name: 'emit_story', args: { body: 'synthetic-private-tool-body' } },
         thoughtSignature: 'synthetic-signature',
@@ -110,18 +112,18 @@ test.each(['gemini-4-argon', 'gemini-4-carbon'])('%s client -> production handle
     const f = await fixture(stream => {
         timers.push(setTimeout(() => { stream.respond({ ':status': 200, 'content-type': 'text/event-stream' }); stream.end(data); }, 110));
     });
-    expect(await (await client(f.url, { model })).text()).toBe(data);
+    expect(await (await client(f.url, { model, effort })).text()).toBe(data);
     await until(() => f.diagnostics.length === 1 && sessions.size === 0);
     expect(f.requests).toHaveLength(1);
     expect(f.requests[0].headers[':path']).toContain(':streamGenerateContent?alt=sse');
-    expect(JSON.parse(f.requests[0].data).generationConfig.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: 'HIGH' });
+    expect(JSON.parse(f.requests[0].data).generationConfig.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel });
     expect(f.diagnostics[0]).toMatchObject({ outcome: 'eof', status: 200 });
     expect(f.diagnostics[0].pingsAck).toBeGreaterThanOrEqual(2);
     expect(f.h1).not.toHaveBeenCalled();
     expect(f.responses[0].listeners('close').some(listener => listener.name === 'onResponseClose')).toBe(false);
     expect(JSON.stringify(f.logs)).not.toMatch(/synthetic-private-prompt|synthetic-private-tool-body|synthetic-signature/);
     expect(f.logs.find(args => args[0] === '[Vertex HTTP/2]')[1]).toMatchObject({
-        model, thinkingConfig: { thinkingLevel: 'HIGH' }, id: f.diagnostics[0].id,
+        model, thinkingConfig: { thinkingLevel }, id: f.diagnostics[0].id,
     });
 });
 

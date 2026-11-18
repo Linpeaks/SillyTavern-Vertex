@@ -30,19 +30,23 @@ for (const sourceName of ['vertexai', 'makersuite']) test(`Argon images require 
     expect(context.isImageInliningSupported()).toBe(false);
 });
 
-for (const sourceName of ['vertexai', 'makersuite']) test(`Carbon enables image, audio and video on ${sourceName} only with inline media`, () => {
-    const { settings, context } = fixture(sourceName);
-    settings.google_model = settings.vertexai_model = 'gemini-4-carbon';
-    const capabilities = () => [context.isImageInliningSupported(), context.isAudioInliningSupported(), context.isVideoInliningSupported()];
-    expect(capabilities()).toEqual([true, true, true]);
-    settings.media_inlining = false;
-    expect(capabilities()).toEqual([false, false, false]);
-    settings.media_inlining = true;
-    settings.google_model = settings.vertexai_model = 'gemini-4-carbon-unknown';
-    expect(capabilities()).toEqual([false, false, false]);
-});
+const nativeMediaModels = ['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen', 'gemini-3.8-flash'];
 
-test('Carbon image, audio and video survive a text-only preset and become Google inlineData', async () => {
+for (const sourceName of ['vertexai', 'makersuite']) {
+    for (const model of nativeMediaModels) test(`${model} enables image, audio and video on ${sourceName} only with inline media`, () => {
+        const { settings, context } = fixture(sourceName);
+        settings.google_model = settings.vertexai_model = model;
+        const capabilities = () => [context.isImageInliningSupported(), context.isAudioInliningSupported(), context.isVideoInliningSupported()];
+        expect(capabilities()).toEqual([true, true, true]);
+        settings.media_inlining = false;
+        expect(capabilities()).toEqual([false, false, false]);
+        settings.media_inlining = true;
+        settings.google_model = settings.vertexai_model = 'gemini-4-carbon-unknown';
+        expect(capabilities()).toEqual([false, false, false]);
+    });
+}
+
+for (const model of nativeMediaModels) test(`${model} image, audio and video survive a text-only preset and become Google inlineData`, async () => {
     const attachments = [
         ['image', 'image/png'],
         ['audio', 'audio/wav'],
@@ -51,10 +55,10 @@ test('Carbon image, audio and video survive a text-only preset and become Google
     const messages = [{ role: 'user', content: [{ type: 'text', text: 'question\n' }, ...attachments] }];
     await preserveMediaParts(() => messages, async () => {
         messages[0].content = JSON.stringify({ history: messages[0].content.filter(part => part.type === 'text').map(part => part.text).join('\n') });
-    }, getGoogleProtectedMediaTypes('gemini-4-carbon'));
+    }, getGoogleProtectedMediaTypes(model));
     const names = { charName: '', userName: '', startsWithGroupName: () => false };
     const merged = postProcessPrompt(messages, PROMPT_PROCESSING_TYPE.MERGE_TOOLS, names);
-    const body = convertGooglePrompt(merged, 'gemini-4-carbon', false, names);
+    const body = convertGooglePrompt(merged, model, false, names);
     expect(body.contents.flatMap(content => content.parts).filter(part => part.inlineData)).toEqual(
         ['image/png', 'audio/wav', 'video/mp4'].map(mimeType => ({ inlineData: { mimeType, data: 'c3ludGhldGlj' } })),
     );

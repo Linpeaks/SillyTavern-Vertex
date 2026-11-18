@@ -1,10 +1,10 @@
-import { GEMINI_4_CARBON } from './gemini-models.js';
+import { GEMINI_3_8_FLASH, isGemini4Model } from './gemini-models.js';
 
 const IMAGE_PART_TYPES = ['image_url'];
-const GEMINI_4_CARBON_PART_TYPES = ['image_url', 'audio_url', 'video_url'];
+const MULTIMODAL_PART_TYPES = ['image_url', 'audio_url', 'video_url'];
 
 export function getGoogleProtectedMediaTypes(model) {
-    return model === GEMINI_4_CARBON ? GEMINI_4_CARBON_PART_TYPES : IMAGE_PART_TYPES;
+    return isGemini4Model(model) || model === GEMINI_3_8_FLASH ? MULTIMODAL_PART_TYPES : IMAGE_PART_TYPES;
 }
 
 /**

@@ -38,7 +38,7 @@ test('native references retain filename and coexist with unchanged text attachme
     expect(await f.context.appendFileContent(message, 'question')).not.toContain('ST_NATIVE_PDF');
 });
 
-for (const model of ['gemini-4-argon', 'gemini-4-carbon']) test(`${model} native upload keeps only metadata in chat and resets mode via the form`, async () => {
+for (const model of ['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen']) test(`${model} native upload keeps only metadata in chat and resets mode via the form`, async () => {
     const f = fixture(model);
     const message = { is_user: true, extra: {} };
     await f.context.populateFileAttachment(message);
@@ -64,7 +64,7 @@ test('selecting an oversized PDF warns immediately without changing the attachme
     const warning = jest.fn();
     const chain = { text: () => chain, attr: () => chain, toggleClass: () => chain, removeClass: () => chain };
     const context = vm.createContext({ ...references, validateFile: async () => true, toastr: { warning },
-        translate: value => value, humanFileSize: value => String(value), $: () => chain, getCurrentChatId: () => null });
+        t: strings => strings[0], translate: value => value, humanFileSize: value => String(value), $: () => chain, getCurrentChatId: () => null });
     vm.runInContext(source.match(/^async function onFileAttach\([^]*?^}/m)[0], context);
     await context.onFileAttach([{ type: 'application/pdf', name: 'synthetic.pdf', size: 150_000_000 }]);
     expect(warning).toHaveBeenCalledWith(references.NATIVE_PDF_SIZE_ERROR);

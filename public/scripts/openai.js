@@ -84,7 +84,7 @@ import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } fr
 import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
 import { getNativePdfReferences, assertNativePdfReferences, validateNativePdfRequest, estimateNativePdfTokens } from './native-pdf.js';
 import { getGoogleProtectedMediaTypes, mediaPartSignatures, assertMediaParts } from './media-preservation.js';
-import { GEMINI_4_CARBON, GEMINI_4_CONTEXT_LIMIT, isGemini4Model, limitCarbonOutputTokens } from './gemini-models.js';
+import { GEMINI_3_8_FLASH, GEMINI_MILLION_TOKENS, isGemini4Model, limitGeminiOutputTokens } from './gemini-models.js';
 
 export {
     openai_messages_count,
@@ -495,7 +495,7 @@ const default_settings = {
     assistant_impersonation: '',
     use_sysprompt: false,
     vertexai_auth_mode: 'express',
-    vertexai_region: 'us-central1',
+    vertexai_region: 'global',
     vertexai_express_project_id: '',
     squash_system_messages: false,
     media_inlining: true,
@@ -632,13 +632,14 @@ function setOpenAIMessages(chat) {
         const signature = isSameModel && !isOtherGroupMember ? chat[j]?.extra?.reasoning_signature : null;
         const reasoning = isSameModel && !isOtherGroupMember ? String(chat[j]?.extra?.reasoning ?? '') : '';
 
-        // Remove reasoning metadata from invocations if the API/model don't match
+        // Provider metadata only belongs to the original API and model.
         if (Array.isArray(invocations) && invocations.length > 0) {
             invocations.forEach((invocation, index) => {
-                if (!isSameModel && (invocation.signature || invocation.reasoning)) {
+                if (!isSameModel && (invocation.signature || invocation.reasoning || invocation.googleCallId)) {
                     const cloneInvocation = structuredClone(invocation);
                     delete cloneInvocation.signature;
                     delete cloneInvocation.reasoning;
+                    delete cloneInvocation.googleCallId;
                     invocations[index] = cloneInvocation;
                 }
             });
@@ -1569,9 +1570,11 @@ export async function prepareOpenAIMessages({
     const userSettings = promptManager.serviceSettings;
     const model = getChatCompletionModel(userSettings);
     const googleSource = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(userSettings.chat_completion_source);
-    if (googleSource && model === GEMINI_4_CARBON) {
-        const context = Math.min(userSettings.openai_max_context, GEMINI_4_CONTEXT_LIMIT);
-        const output = limitCarbonOutputTokens(userSettings.openai_max_tokens, userSettings.stream_openai && type !== 'quiet');
+    if (googleSource && (isGemini4Model(model) || model === GEMINI_3_8_FLASH)) {
+        const output = limitGeminiOutputTokens(model, userSettings.openai_max_tokens, userSettings.stream_openai && type !== 'quiet');
+        // 3.8 Flash has a separate input limit. Gemini 4 shares one budget across input and output.
+        const modelLimit = model === GEMINI_3_8_FLASH ? GEMINI_MILLION_TOKENS + Number(output) : GEMINI_MILLION_TOKENS;
+        const context = Math.min(userSettings.openai_max_context, modelLimit);
         chatCompletion.setTokenBudget(context, output);
     } else {
         chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
@@ -2919,9 +2922,7 @@ export async function createGenerationParameters(settings, model, type, messages
     }
 
     if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(settings.chat_completion_source)) {
-        if (model === GEMINI_4_CARBON) {
-            generate_data.max_tokens = limitCarbonOutputTokens(generate_data.max_tokens, stream);
-        }
+        generate_data.max_tokens = limitGeminiOutputTokens(model, generate_data.max_tokens, stream);
         const stopStringsLimit = 5;
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.stop = getCustomStoppingStrings(stopStringsLimit).slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
@@ -3600,8 +3601,10 @@ class Message {
      * @returns {Promise<void>}
      */
     async setToolCalls(invocations, includeSignature, includeReasoning = false) {
+        const isNativeGoogle = [chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(oai_settings.chat_completion_source);
         this.tool_calls = invocations.map(i => ({
             id: i.id,
+            ...(isNativeGoogle && i.googleCallId ? { googleCallId: i.googleCallId } : {}),
             type: 'function',
             function: {
                 arguments: i.parameters,
@@ -5155,12 +5158,16 @@ function getMaxContextOpenAI(value) {
  * @returns {number} Maximum context size in tokens
  */
 function getGeminiMaxContext(model, isUnlocked) {
-    if (model === GEMINI_4_CARBON) {
-        return GEMINI_4_CONTEXT_LIMIT;
+    if (isGemini4Model(model)) {
+        return GEMINI_MILLION_TOKENS;
     }
 
     if (isUnlocked) {
         return unlocked_max;
+    }
+
+    if (model === GEMINI_3_8_FLASH) {
+        return GEMINI_MILLION_TOKENS;
     }
 
     if (Array.isArray(model_list) && model_list.length > 0) {
@@ -6418,9 +6425,9 @@ export function isVideoInliningSupported() {
 
     switch (oai_settings.chat_completion_source) {
         case chat_completion_sources.MAKERSUITE:
-            return oai_settings.google_model === GEMINI_4_CARBON || videoSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return isGemini4Model(oai_settings.google_model) || videoSupportedModels.some(model => oai_settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return oai_settings.vertexai_model === GEMINI_4_CARBON || videoSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return isGemini4Model(oai_settings.vertexai_model) || videoSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
         case chat_completion_sources.OPENROUTER:
             return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('video'));
         case chat_completion_sources.ZAI:
@@ -6460,9 +6467,9 @@ export function isAudioInliningSupported() {
         case chat_completion_sources.OPENAI:
             return audioSupportedModels.some(model => oai_settings.openai_model.includes(model));
         case chat_completion_sources.MAKERSUITE:
-            return oai_settings.google_model === GEMINI_4_CARBON || audioSupportedModels.some(model => oai_settings.google_model.includes(model));
+            return isGemini4Model(oai_settings.google_model) || audioSupportedModels.some(model => oai_settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
-            return oai_settings.vertexai_model === GEMINI_4_CARBON || audioSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
+            return isGemini4Model(oai_settings.vertexai_model) || audioSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
         case chat_completion_sources.OPENROUTER:
             return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('audio'));
         case chat_completion_sources.CUSTOM:

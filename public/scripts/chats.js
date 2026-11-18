@@ -431,7 +431,7 @@ async function onFileAttach(fileList) {
     $('#file_form .file_name').text(name).attr('title', title);
     $('#file_form .file_size').text(humanFileSize(size)).attr('title', size);
     $('#pdf_attachment_mode_label').toggleClass('displayNone', ![...fileList].some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)))
-        .attr('title', `Original PDF: native Vertex Gemini 4 Argon or Carbon; ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file, ${NATIVE_PDF_LIMITS.files} files / ${NATIVE_PDF_LIMITS.pages} pages / ${NATIVE_PDF_LIMITS.totalBytes / 1e6} MB per request. Context estimate: ${NATIVE_PDF_LIMITS.estimatedTokensPerPage} tokens/page; actual usage may differ.`);
+        .attr('title', t`Send original PDFs via native Vertex AI with Gemini 4. The limit is ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file. Each request accepts up to ${NATIVE_PDF_LIMITS.files} files, ${NATIVE_PDF_LIMITS.pages} pages, and ${NATIVE_PDF_LIMITS.totalBytes / 1e6} MB total. Estimated ${NATIVE_PDF_LIMITS.estimatedTokensPerPage} tokens per page.`);
     $('#file_form').removeClass('displayNone');
 
     // Reset form on chat change (if not on a welcome screen)

@@ -30,14 +30,15 @@ let server, url, directories;
 const calls = [];
 const logs = [];
 const toolReply = { candidates: [{ content: { parts: [{ functionCall: { name: 'emit', args: { body: 'synthetic tool response' } } }] }, finishReason: 'STOP' }] };
-const carbonStory = '第一段🧪\n\n第二段 "保留引号"';
-const carbonSignature = 'synthetic-carbon-tool-signature';
+const story = '第一段🧪\n\n第二段 "保留引号"';
+const signature = 'synthetic-tool-signature';
+const hydrogenProviderId = 'synthetic-hydrogen-provider-id';
 
-async function* carbonEvents() {
+async function* streamedToolEvents(providerId) {
     const frames = [
         { candidates: [{ content: { parts: [{ thought: true, text: '思考摘要' }] } }] },
         { candidates: [{ content: { parts: [{
-            functionCall: { name: 'emit', args: { body: carbonStory } }, thoughtSignature: carbonSignature,
+            functionCall: { name: 'emit', args: { body: story }, ...(providerId ? { id: providerId } : {}) }, thoughtSignature: signature,
         }] } }] },
         { candidates: [{ finishReason: 'STOP' }], usageMetadata: { candidatesTokenCount: 10 } },
     ];
@@ -68,7 +69,8 @@ beforeAll(async () => {
         getVertexHttp2Proxy: async () => '',
         fetchVertexHttp2: async (url, init) => {
             calls.push({ url, body: JSON.parse(init.body), signal: init.signal });
-            const events = url.includes('gemini-4-carbon:') ? carbonEvents() : ['data: ' + JSON.stringify(toolReply) + '\n\n'];
+            const providerId = url.includes('gemini-4-hydrogen:') ? hydrogenProviderId : undefined;
+            const events = /gemini-4-(carbon|hydrogen):/.test(url) ? streamedToolEvents(providerId) : ['data: ' + JSON.stringify(toolReply) + '\n\n'];
             return new Response(Readable.from(events), { headers: { 'content-type': 'text/event-stream' } });
         },
     });
@@ -112,12 +114,14 @@ test('real upload and generate routes preserve PDF bytes, merge_tools and tool-o
     expect(JSON.stringify(logs)).not.toContain(bytes.toString('base64'));
 });
 
-test('Carbon sends a PDF and image and delivers the complete streamed tool body to a registered tool', async () => {
-    const bytes = makePdf('synthetic Carbon document');
+test.each([
+    ['gemini-4-carbon', 'HIGH', undefined], ['gemini-4-hydrogen', 'XHIGH', hydrogenProviderId],
+])('%s round-trips a PDF, image and complete signed streamed tool call', async (model, thinkingLevel, providerId) => {
+    const bytes = makePdf(`synthetic ${model} document`);
     const upload = await fetch(url + '/upload-pdf', { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: bytes });
     expect(upload.status).toBe(200);
     const marker = references.nativePdfMarker(await upload.json());
-    const image = Buffer.from('synthetic Carbon image bytes').toString('base64');
+    const image = Buffer.from(`synthetic ${model} image bytes`).toString('base64');
     const count = calls.length;
 
     const readFrontend = file => fs.readFileSync(new URL(`../public/scripts/${file}`, import.meta.url), 'utf8');
@@ -125,20 +129,22 @@ test('Carbon sends a PDF and image and delivers the complete streamed tool body 
     const sse = readFrontend('sse-stream.js');
     const toolCalling = readFrontend('tool-calling.js');
     const settings = {
-        chat_completion_source: 'vertexai', vertexai_model: 'gemini-4-carbon', show_thoughts: true,
+        chat_completion_source: 'vertexai', vertexai_model: model, show_thoughts: true,
         function_calling: true, custom_prompt_post_processing: 'merge_tools',
     };
     const context = vm.createContext({
-        ...references, ...media, oai_settings: settings, chat_completion_sources: constants.CHAT_COMPLETION_SOURCES,
+        ...references, ...media, ...geminiModels, oai_settings: settings, chat_completion_sources: constants.CHAT_COMPLETION_SOURCES,
         main_api: 'openai', model_list: [], custom_prompt_post_processing_types: converters.PROMPT_PROCESSING_TYPE,
-        TextDecoderStream, TransformStream, MessageEvent, AbortController,
+        TextDecoderStream, TransformStream, MessageEvent, AbortController, structuredClone,
+        IGNORE_SYMBOL: Symbol('ignore'), system_message_types: { NARRATOR: 'narrator' }, character_names_behavior: { NONE: 'none' },
+        selected_group: false, getMediaDisplay: () => null, getMediaIndex: () => null, tokenHandler: { countAsync: async () => 0 },
         fetch: (_path, options) => global.fetch(url + '/generate', options),
         getRequestHeaders: () => ({ 'Content-Type': 'application/json' }),
         getChatCompletionModel: () => settings.vertexai_model,
         createGenerationParameters: async (_settings, model, _type, messages) => ({
             stream: true, canMultiSwipe: false, generate_data: {
                 chat_completion_source: 'vertexai', vertexai_auth_mode: 'full', vertexai_region: 'global', model,
-                stream: true, max_tokens: 128_000, include_reasoning: true, reasoning_effort: 'high', tool_choice: 'required',
+                stream: true, max_tokens: 128_000, include_reasoning: true, reasoning_effort: 'max', tool_choice: 'required',
                 custom_prompt_post_processing: 'merge_tools', messages,
                 tools: [{ type: 'function', function: { name: 'emit', parameters: {
                     type: 'object', properties: { body: { type: 'string' } }, required: ['body'],
@@ -155,6 +161,8 @@ test('Carbon sends a PDF and image and delivers the complete streamed tool body 
         toolCalling.replace(/^import [^\n]*\n/gm, '').replace('export class ToolManager', 'class ToolManager'),
         openai.match(/^export function getStreamingReply\([^]*?^}/m)[0].replace('export ', ''),
         openai.match(/^async function sendOpenAIRequest\([^]*?^}/m)[0],
+        openai.match(/^function setOpenAIMessages\([^]*?^}/m)[0],
+        `class Message { role = 'assistant'; ${openai.match(/^ {4}async setToolCalls\([^]*?^ {4}}/m)[0]} }`,
     ].join('\n'), context);
     const toolManager = vm.runInContext('ToolManager', context);
     const action = jest.fn(({ body }) => body);
@@ -173,15 +181,15 @@ test('Carbon sends a PDF and image and delivers the complete streamed tool body 
     const result = await toolManager.invokeFunctionTools(final.toolCalls, { reasoningText: final.state.reasoning });
     expect(result.errors).toEqual([]);
     expect(result.invocations).toEqual([expect.objectContaining({
-        name: 'emit', parameters: JSON.stringify({ body: carbonStory }), result: carbonStory, signature: carbonSignature,
+        name: 'emit', parameters: JSON.stringify({ body: story }), result: story, signature,
     })]);
     expect(action).toHaveBeenCalledTimes(1);
-    expect(action).toHaveBeenCalledWith({ body: carbonStory });
+    expect(action).toHaveBeenCalledWith({ body: story });
 
     expect(calls).toHaveLength(count + 1);
     const request = calls.at(-1);
-    expect(request.url).toContain('/locations/global/publishers/google/models/gemini-4-carbon:streamGenerateContent?alt=sse');
-    expect(request.body.generationConfig).toMatchObject({ maxOutputTokens: 65_536, thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' } });
+    expect(request.url).toContain(`/locations/global/publishers/google/models/${model}:streamGenerateContent?alt=sse`);
+    expect(request.body.generationConfig).toMatchObject({ maxOutputTokens: 65_536, thinkingConfig: { includeThoughts: true, thinkingLevel } });
     expect(request.body.toolConfig.functionCallingConfig).toEqual({ mode: 'ANY' });
     const attachments = request.body.contents.flatMap(content => content.parts).flatMap(part => part.inlineData ? [part.inlineData] : []);
     expect(attachments).toEqual([
@@ -189,7 +197,43 @@ test('Carbon sends a PDF and image and delivers the complete streamed tool body 
         { mimeType: 'image/png', data: image },
     ]);
     expect(JSON.stringify(request.body)).not.toContain(marker);
-    expect(JSON.stringify(logs)).not.toContain(carbonStory);
+    expect(JSON.stringify(logs)).not.toContain(story);
+
+    const [invocation] = result.invocations;
+    expect(invocation.googleCallId).toBe(providerId);
+    expect(Object.hasOwn(invocation, 'googleCallId')).toBe(Boolean(providerId));
+    expect(invocation.id).not.toBe(providerId);
+
+    const saved = JSON.parse(JSON.stringify([{ mes: '', extra: { api: 'vertexai', model, tool_invocations: result.invocations } }]));
+    const [matching] = context.setOpenAIMessages(saved);
+    const toolMessage = vm.runInContext('new Message()', context);
+    await toolMessage.setToolCalls(matching.invocations, true);
+    const followUp = await post('/generate', {
+        chat_completion_source: 'vertexai', vertexai_auth_mode: 'full', vertexai_region: 'global', model,
+        stream: true, max_tokens: 128_000, custom_prompt_post_processing: 'merge_tools', messages: [
+            { role: 'user', content: 'synthetic question' },
+            { role: 'assistant', content: '', tool_calls: toolMessage.tool_calls },
+            { role: 'tool', content: invocation.result, tool_call_id: invocation.id },
+        ],
+    });
+    expect(followUp.status).toBe(200);
+    await followUp.text();
+    expect(calls).toHaveLength(count + 2);
+    const history = calls.at(-1).body.contents.flatMap(content => content.parts);
+    expect(history.find(part => part.functionCall)).toEqual({
+        functionCall: { name: 'emit', args: { body: story }, ...(providerId ? { id: providerId } : {}) },
+        thoughtSignature: signature,
+    });
+    expect(history.find(part => part.functionResponse)).toEqual({
+        functionResponse: { name: 'emit', response: { name: 'emit', content: story }, ...(providerId ? { id: providerId } : {}) },
+    });
+
+    settings.chat_completion_source = 'makersuite';
+    expect(context.setOpenAIMessages(saved)[0].invocations[0]).not.toHaveProperty('googleCallId');
+    settings.chat_completion_source = 'vertexai';
+    settings.vertexai_model = 'gemini-3.8-flash';
+    expect(context.setOpenAIMessages(saved)[0].invocations[0]).not.toHaveProperty('googleCallId');
+    expect(saved[0].extra.tool_invocations[0].googleCallId).toBe(providerId);
 });
 
 test('unsupported source, stripped manifest and missing file make zero generation calls', async () => {

@@ -15,6 +15,7 @@ import { isTrueBoolean } from './utils.js';
 /**
  * @typedef {object} ToolInvocation
  * @property {string} id - A unique identifier for the tool invocation.
+ * @property {string} [googleCallId] - The optional ID returned by Google's functionCall.
  * @property {string} displayName - The display name of the tool.
  * @property {string} name - The name of the tool.
  * @property {string} parameters - The parameters for the tool invocation.
@@ -709,7 +710,12 @@ export class ToolManager {
         const isClaudeToolCall = c => Array.isArray(c) ? c.filter(x => x).every(isClaudeToolCall) : c?.input && c?.name && c?.id;
         const isGoogleToolCall = c => Array.isArray(c) ? c.filter(x => x).every(isGoogleToolCall) : c?.name && c?.args;
         const convertClaudeToolCall = c => ({ id: c.id, function: { name: c.name, arguments: c.input } });
-        const convertGoogleToolCall = (c, signature = null) => ({ id: getRandomId(), function: { name: c.name, arguments: c.args }, signature });
+        const convertGoogleToolCall = (c, signature = null) => ({
+            id: getRandomId(),
+            ...(typeof c.id === 'string' && c.id ? { googleCallId: c.id } : {}),
+            function: { name: c.name, arguments: c.args },
+            signature,
+        });
 
         // Parsed tool calls from streaming data
         if (Array.isArray(data) && data.length > 0 && Array.isArray(data[0])) {
@@ -821,6 +827,7 @@ export class ToolManager {
                 } else {
                     result.invocations.push({
                         id,
+                        ...(toolCall.googleCallId && { googleCallId: toolCall.googleCallId }),
                         displayName,
                         name,
                         parameters: stringify(parameters),
@@ -841,6 +848,7 @@ export class ToolManager {
 
             const invocation = {
                 id,
+                ...(toolCall.googleCallId && { googleCallId: toolCall.googleCallId }),
                 displayName,
                 name,
                 parameters: stringify(parameters),

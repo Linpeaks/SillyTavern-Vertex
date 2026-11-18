@@ -1,6 +1,7 @@
 {
     "SillyTavern accepts original PDFs up to 50 MB each. Compress or split the file yourself, or use Extract text. Files are not split automatically.": "酒馆的 PDF 原文件上限为每份 50 MB。请自行压缩或拆分，也可选择“提取文本”；系统不会自动拆分文件。",
-    "Original PDFs require native Vertex AI with Gemini 4 Argon or Carbon. Select Extract text for other connections.": "发送 PDF 原文件需要通过原生 Vertex AI 连接 Gemini 4 Argon 或 Carbon。使用其他连接时请选择“提取文本”。",
+    "Original PDFs require native Vertex AI with Gemini 4 Argon, Carbon, or Hydrogen. Select Extract text for other connections.": "发送 PDF 原文件需要通过原生 Vertex AI 连接 Gemini 4 Argon、Carbon 或 Hydrogen。使用其他连接时请选择“提取文本”。",
+    "Send original PDFs via native Vertex AI with Gemini 4. The limit is ${0} MB per file. Each request accepts up to ${1} files, ${2} pages, and ${3} MB total. Estimated ${4} tokens per page.": "通过原生 Vertex AI 将 PDF 原文件发送给 Gemini 4。每个文件最多 ${0} MB，每次请求最多 ${1} 个文件、${2} 页，总大小不超过 ${3} MB。每页估算 ${4} 个 token。",
     "Extract text": "提取文本",
     "Original PDF (Vertex Gemini 4)": "发送 PDF 原文件（Vertex Gemini 4）",
     "Download original PDF": "下载 PDF 原文件",
@@ -492,7 +493,7 @@
     "(Express mode)": "（快速模式）",
     "API Key": "API 密钥",
     "Project ID": "项目 ID：",
-    "Project ID is required when selecting regions other than the default (us-central1). You can find this in a model 404 error message.": "仅当选择非默认区域（us-central1）时才需要项目 ID。\n您可以在模型 404 错误消息中找到它。",
+    "Use the global region and leave Project ID blank for free Express access. For pay-as-you-go access with an API key, enter the project ID and select a supported region.": "使用免费的 Express 模式时，区域选择 global，项目 ID 留空。使用 API 密钥按量付费时，请填写项目 ID 并选择模型支持的区域。",
     "Service Account Configuration": "Service Account 配置",
     "Service Account JSON Content": "Service Account JSON 内容：",
     "For privacy reasons, your Service Account JSON content will be hidden after you click 'Validate JSON'.": "出于隐私考虑，你的 Service Account JSON 内容将在点击“验证 JSON”后隐藏。",

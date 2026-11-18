@@ -682,6 +682,16 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 浏览器验证副作用：临时设置触发了全局扩展自动更新，实际安装的 JS-Slash-Runner 从 `333e8a1` 快进到 `91a706c`，扩展工作区干净，`ORIG_HEAD` 指向原版本。已停止测试实例并告知用户。恢复扩展的原始本地分支位置需遵循用户的 Git 历史修改授权要求。此扩展位于主仓库忽略目录，不纳入本次 Carbon 改动。
 - 主仓库基线为 `codex/image-preset-attachments` / `9f31f5b71`，起始只含上轮调查日志的未提交改动。Carbon 源码、合成测试和第 010/011 节一起纳入本次交付范围，未推送。日常酒馆实例和用户配置没有切换，使用时在结束当前生成后重启酒馆并刷新，再从模型列表选择 Carbon。
 
+## 015 · 2026-11-18 13:51（Asia/Shanghai）· 内置 Gemini 4 Hydrogen、Argon 和 Gemini 3.8 Flash
+
+- 用户要求将 Hydrogen 和之前更新过的模型直接放入内置菜单。核对时，两个聊天菜单已有 Carbon，Argon 仍来自本机自定义型号，两个图片描述菜单均缺少 Gemini 4，四个菜单也都缺少 3.8 Flash。补齐四处选项，保留已有模型选择。独立新连接的 Vertex 默认区域改为 `global`。已配置的区域照常读取。
+- 型号与限制依据 [AI Studio Hydrogen 规格](https://aistudio.google.com/docs/models/gemini-4-hydrogen)、[AI Studio 迁移指南](https://aistudio.google.com/docs/whats-new-gemini-4-hydrogen)、[Cloud Hydrogen 开发指南](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/guides/gemini-4-hydrogen) 和 [Cloud 3.8 Flash 规格](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-8-flash)。三个 Gemini 4 型号输入输出共用 1,048,576 token。Hydrogen 的 Maximum 发出 XHIGH，单次普通或流式输出最多 65,536。Carbon 和 Argon 的 Maximum 为 HIGH，普通 REST 单次最多 32,768，流式单次最多 65,536。3.8 Flash 保留自己的输入与输出预算及思考档位。两个原生 Google 来源共用相应的预算与请求规则。
+- `public/index.html` 与内置 caption 扩展补齐型号。浏览器实测发现图片描述切换到 Vertex 时会选中隐藏的 AI Studio 同名选项，已按供应商恢复选择。共享型号逻辑、请求转换、聊天/图片描述端点、媒体和原始 PDF 提示及简繁中文随型号更新。Hydrogen 复用原生 Vertex 的 PDF 上传路径。Vertex 聊天及图片描述按区域使用对应主机，旧型号带项目 ID 的 Express 聊天沿用原主机。图片描述拼接最终文本片段。
+- Gemini 4 回传已有同型号文本签名。Google 返回工具调用 ID 时，工具调用记录在原本地标识旁保留该 ID，同来源同型号的后续请求将它写入匹配的调用与结果。没有该字段的历史沿用原流程。保持完整工具参数和单次提交。
+- 最终全量 Jest 使用 `VERTEX_LONG_IDLE_TEST=1`，31 套件、653 项全部通过（77.6 秒）。本地 Express、模拟 Google 和本地 TLS HTTP/2 覆盖 Vertex/AI Studio 请求、图片和 PDF、工具正文跨 UTF-8 分块及下一轮签名与 ID、区域路由和 65 秒保活。修改的 JS 按项目 ESLint 配置和 `node --check` 检查通过，简繁 JSON 与 Git 空白检查通过。
+- Playwright 使用独立 Chrome、临时数据根与 18186 端口，禁用扩展自动更新，发现列表只提供内置图片描述扩展。实测两个聊天来源均可选择 Hydrogen 并在刷新后恢复，上下文控件上限为 1,048,576。图片描述两个来源的四款型号分别只出现一次，切换与刷新均选中对应供应商的选项。模拟与浏览器验证没有调用 Google 生成，未测账号权限、实际识图或 TUN。原有自定义扩展的 Argon 条目仍由该扩展管理，用户可直接选内置分组。
+- Git 起点 `codex/image-preset-attachments` / `c3fc126d1`。本轮本地提交只收录模型相关源码、测试和本节，起点已有的日志第 012–014 节及 `launcher/README.md` 单独保留。日常酒馆重启并刷新页面后可选用内置模型。远端与手机部署未更新。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

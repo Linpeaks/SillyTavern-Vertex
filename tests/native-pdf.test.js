@@ -115,7 +115,10 @@ test('rejects unsupported models/providers/proxies and lost or duplicated refere
     const file = await storeNativePdf(directories, makePdf().toString('base64'));
     const marker = nativePdfMarker(file);
     const messages = [{ role: 'user', content: marker }];
-    for (const change of [{ model: 'gemini-unknown' }, { chat_completion_source: 'openai' }, { reverse_proxy: 'https://example.com' }]) {
+    for (const change of [
+        { model: 'gemini-unknown' }, { model: 'gemini-3.8-flash' }, { chat_completion_source: 'openai' },
+        { chat_completion_source: 'makersuite', model: 'gemini-4-hydrogen' }, { reverse_proxy: 'https://example.com' },
+    ]) {
         expect(() => validateNativePdfRequest({ ...request(messages), ...change })).toThrow(/require/);
     }
     const refs = getNativePdfReferences(messages);

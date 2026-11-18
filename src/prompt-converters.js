@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getConfigValue, tryParse } from './util.js';
-import { isGemini4Model } from '../public/scripts/gemini-models.js';
+import { GEMINI_3_8_FLASH, GEMINI_4_HYDROGEN, isGemini4Model } from '../public/scripts/gemini-models.js';
 
 const PROMPT_PLACEHOLDER = getConfigValue('promptPlaceholder', 'Let\'s get started.');
 
@@ -452,10 +452,11 @@ export function convertGooglePrompt(messages, model, useSysPrompt, names) {
     }
 
     const system_instruction = { parts: sysPrompt.map(text => ({ text })) };
-    const toolNameMap = {};
+    const toolCallsById = new Map();
 
     // https://ai.google.dev/gemini-api/docs/latest-model#prefilled-model-turn-validation
-    const noPrefillModel = /gemini-3\.[67]-flash|gemini-3\.5-flash-lite/.test(model);
+    const isGemini4 = isGemini4Model(model);
+    const noPrefillModel = isGemini4 || model === GEMINI_3_8_FLASH || /gemini-3\.[67]-flash|gemini-3\.5-flash-lite/.test(model);
 
     const contents = [];
     messages.forEach((message, index) => {
@@ -540,24 +541,28 @@ export function convertGooglePrompt(messages, model, useSysPrompt, names) {
             if (part.type === 'text') {
                 parts.push({ text: part.text });
             } else if (part.type === 'tool_call_id') {
-                const name = toolNameMap[part.tool_call_id] ?? 'unknown';
+                const { name = 'unknown', googleCallId } = toolCallsById.get(part.tool_call_id) ?? {};
                 parts.push({
                     functionResponse: {
                         name: name,
                         response: { name: name, content: part.content },
+                        ...(googleCallId ? { id: googleCallId } : {}),
                     },
                 });
             } else if (part.type === 'tool_calls') {
                 part.tool_calls.forEach((toolCall) => {
+                    const name = toolCall.function.name;
+                    const googleCallId = typeof toolCall.googleCallId === 'string' ? toolCall.googleCallId : undefined;
                     parts.push({
                         functionCall: {
-                            name: toolCall.function.name,
+                            name: name,
                             args: tryParse(toolCall.function.arguments) ?? toolCall.function.arguments,
+                            ...(googleCallId ? { id: googleCallId } : {}),
                         },
                         ...(toolCall.signature ? { thoughtSignature: toolCall.signature } : {}),
                     });
 
-                    toolNameMap[toolCall.id] = toolCall.function.name;
+                    toolCallsById.set(toolCall.id, { name, googleCallId });
                 });
             } else if (part.type === 'image_url') {
                 const imageUrl = part.image_url?.url;
@@ -575,7 +580,12 @@ export function convertGooglePrompt(messages, model, useSysPrompt, names) {
 
         // https://ai.google.dev/gemini-api/docs/gemini-3#migrating_from_other_models
         // Inject stored thought signatures, or fall back to bypass magic for Gemini 3
-        if (/gemini-3/.test(model) || /gemini-2\.5/.test(model)) {
+        if (isGemini4 && enableThoughtSignatures && message.role === 'model' && message.signature) {
+            const textPart = parts.findLast(part => typeof part.text === 'string');
+            if (textPart) {
+                textPart.thoughtSignature = message.signature;
+            }
+        } else if (/gemini-3/.test(model) || /gemini-2\.5/.test(model)) {
             const skipSignatureMagic = 'skip_thought_signature_validator';
             const textSignature = message.signature;
 
@@ -599,17 +609,23 @@ export function convertGooglePrompt(messages, model, useSysPrompt, names) {
 
         // merge consecutive messages with the same role
         if (index > 0 && message.role === contents[contents.length - 1].role) {
+            const previousParts = contents[contents.length - 1].parts;
+            if (isGemini4 && (parts.some(part => part.thoughtSignature) || previousParts.some(part => part.thoughtSignature))) {
+                // Keep signed text and function calls in their original order and parts.
+                previousParts.push(...parts);
+                return;
+            }
             parts.forEach((part) => {
                 if (part.text) {
-                    const textPart = contents[contents.length - 1].parts.find(p => typeof p.text === 'string');
+                    const textPart = previousParts.find(p => typeof p.text === 'string');
                     if (textPart) {
                         textPart.text += '\n\n' + part.text;
                     } else {
-                        contents[contents.length - 1].parts.push(part);
+                        previousParts.push(part);
                     }
                 }
                 if (part.inlineData || part.functionCall || part.functionResponse || part.thoughtSignature || part.mediaResolution) {
-                    contents[contents.length - 1].parts.push(part);
+                    previousParts.push(part);
                 }
             });
         } else {
@@ -1181,8 +1197,9 @@ export function calculateGoogleBudgetTokens(maxTokens, reasoningEffort, model) {
             case REASONING_EFFORT.medium:
                 return 'MEDIUM';
             case REASONING_EFFORT.high:
-            case REASONING_EFFORT.max:
                 return 'HIGH';
+            case REASONING_EFFORT.max:
+                return model === GEMINI_4_HYDROGEN ? 'XHIGH' : 'HIGH';
             default:
                 return null;
         }
@@ -1272,7 +1289,7 @@ export function calculateGoogleBudgetTokens(maxTokens, reasoningEffort, model) {
 
     function getGemini3FlashBudget() {
         // https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash
-        const noMinimalThinking = /gemini-3\.7-flash/.test(model);
+        const noMinimalThinking = model === GEMINI_3_8_FLASH || /gemini-3\.7-flash/.test(model);
         switch (reasoningEffort) {
             case REASONING_EFFORT.auto:
                 return null;

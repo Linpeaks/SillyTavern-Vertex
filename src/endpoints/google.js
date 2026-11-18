@@ -10,6 +10,7 @@ import lodash from 'lodash';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 import { GEMINI_SAFETY, VERTEX_SAFETY } from '../constants.js';
 import { delay, getConfigValue, trimTrailingSlash } from '../util.js';
+import { getVertexGeminiLocation } from '../../public/scripts/gemini-models.js';
 
 const API_MAKERSUITE = 'https://generativelanguage.googleapis.com';
 const API_VERTEX_AI = 'https://us-central1-aiplatform.googleapis.com';
@@ -163,7 +164,6 @@ export function getProjectIdFromServiceAccount(serviceAccount) {
  */
 export async function getGoogleApiConfig(request, model, endpoint = 'generateContent') {
     const useVertexAi = request.body.api === 'vertexai';
-    const region = request.body.vertexai_region || 'us-central1';
     const apiName = useVertexAi ? 'Google Vertex AI' : 'Google AI Studio';
     const safetySettings = [...GEMINI_SAFETY, ...(useVertexAi ? VERTEX_SAFETY : [])];
 
@@ -176,14 +176,19 @@ export async function getGoogleApiConfig(request, model, endpoint = 'generateCon
     if (useVertexAi) {
         // Get authentication for Vertex AI
         const { authHeader, authType } = await getVertexAIAuth(request);
+        const { region, host, isMultiRegion, regionError } = getVertexGeminiLocation(model, request.body.vertexai_region);
+        if (authType !== 'proxy' && regionError) {
+            throw new Error(regionError);
+        }
 
         if (authType === 'express') {
             // Express mode: use API key parameter
             const keyParam = authHeader.replace('Bearer ', '');
             const projectId = request.body.vertexai_express_project_id;
-            baseUrl = region === 'global'
-                ? 'https://aiplatform.googleapis.com/v1'
-                : `https://${region}-aiplatform.googleapis.com/v1`;
+            if (isMultiRegion && !projectId) {
+                throw new Error('Enter a Vertex AI project ID to use the us or eu region, or select global.');
+            }
+            baseUrl = `${host}/v1`;
             url = projectId
                 ? `${baseUrl}/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${endpoint}`
                 : `${baseUrl}/publishers/google/models/${model}:${endpoint}`;
@@ -203,10 +208,7 @@ export async function getGoogleApiConfig(request, model, endpoint = 'generateCon
             } catch (error) {
                 throw new Error('Failed to extract project ID from Service Account JSON.');
             }
-            // Handle global region differently - no region prefix in hostname
-            baseUrl = region === 'global'
-                ? 'https://aiplatform.googleapis.com/v1'
-                : `https://${region}-aiplatform.googleapis.com/v1`;
+            baseUrl = `${host}/v1`;
             url = `${baseUrl}/projects/${projectId}/locations/${region}/publishers/google/models/${model}:${endpoint}`;
             headers['Authorization'] = authHeader;
         } else {
@@ -276,7 +278,9 @@ router.post('/caption-image', async (request, response) => {
             return response.status(500).send('No candidates found, image was most likely filtered.');
         }
 
-        const caption = candidates[0].content.parts[0].text;
+        const caption = candidates[0]?.content?.parts
+            ?.filter(part => !part.thought && typeof part.text === 'string')
+            .map(part => part.text).join('');
         if (!caption) {
             return response.status(500).send('No caption found');
         }

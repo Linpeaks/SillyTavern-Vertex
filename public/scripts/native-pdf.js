@@ -2,14 +2,13 @@ import { isGemini4Model } from './gemini-models.js';
 
 // Shared by browser and server. References survive text-only preset processing;
 // only the backend replaces them with PDF parts after prompt conversion.
-// The byte and page limits bound local parsing and buffering for both models.
+// The byte and page limits bound local parsing and buffering.
 // MB here means 1,000,000 bytes.
-// Page tokens remain a heuristic, based on the documented high-resolution
-// Gemini PDF page estimate, not an exact Argon token count or API setting.
+// The token estimate per page uses Gemini's documented high-resolution rate.
 export const NATIVE_PDF_LIMITS = Object.freeze({ fileBytes: 50_000_000, files: 16, pages: 3000,
     totalBytes: 100_000_000, requestBytes: 140_000_000, estimatedTokensPerPage: 1120 });
 export const NATIVE_PDF_SIZE_ERROR = 'SillyTavern accepts original PDFs up to 50 MB each. Compress or split the file yourself, or use Extract text. Files are not split automatically.';
-export const NATIVE_PDF_CONNECTION_ERROR = 'Original PDFs require native Vertex AI with Gemini 4 Argon or Carbon. Select Extract text for other connections.';
+export const NATIVE_PDF_CONNECTION_ERROR = 'Original PDFs require native Vertex AI with Gemini 4 Argon, Carbon, or Hydrogen. Select Extract text for other connections.';
 const markerPattern = /\[\[ST_NATIVE_PDF:([a-f0-9-]{36}):([a-f0-9]{64}):(\d{1,4})\]\]/g;
 
 /** @param {object} file @returns {string} Opaque reference, never file contents */

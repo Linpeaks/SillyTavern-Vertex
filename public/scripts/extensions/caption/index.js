@@ -573,19 +573,21 @@ export async function init() {
     async function switchMultimodalBlocks() {
         await addRemoteEndpointModels();
         const isMultimodal = extension_settings.caption.source === 'multimodal';
+        const api = extension_settings.caption.multimodal_api;
+        const modelSelect = document.querySelector('#caption_multimodal_model');
+        const modelOptions = Array.from(modelSelect.options).filter(option => option.dataset.type?.split(',').includes(api));
         if (!extension_settings.caption.multimodal_model) {
-            const dropdown = $('#caption_multimodal_model');
-            const options = dropdown.find(`option[data-type="${extension_settings.caption.multimodal_api}"]`);
-            extension_settings.caption.multimodal_model = String(options.first().val());
+            extension_settings.caption.multimodal_model = modelOptions[0]?.value || '';
         }
         $('#caption_multimodal_block').toggle(isMultimodal);
         $('#caption_prompt_block').toggle(isMultimodal);
-        $('#caption_multimodal_api').val(extension_settings.caption.multimodal_api);
-        $('#caption_multimodal_model').val(extension_settings.caption.multimodal_model);
+        $('#caption_multimodal_api').val(api);
+        // AI Studio and Vertex share model IDs but have separate options.
+        modelSelect.selectedIndex = modelOptions.find(option => option.value === extension_settings.caption.multimodal_model)?.index ?? -1;
         $('#caption_multimodal_block [data-type]').each(function () {
             const type = $(this).data('type');
             const types = type.split(',');
-            $(this).toggle(types.includes(extension_settings.caption.multimodal_api));
+            $(this).toggle(types.includes(api));
         });
     }
     async function addSettings() {
