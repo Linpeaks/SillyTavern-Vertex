@@ -714,6 +714,15 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 终验覆盖 655 项 Jest（含 65 秒本地 HTTP/2 慢测）、40 项 Playwright（原文、思考、工具消息、滑动切换与渲染）以及 14 项 Termux 管理测试。浏览器连接从 Git 归档构建的独立实例，使用合成聊天与新锁文件的干净依赖。日常 Windows 启动器 `-Check`、ESLint、JS 语法及 Git 差异检查通过，未调用真实模型。
 - 本次按四项分别提交。发布目标为 `Linpeaks/SillyTavern-Vertex:main`，该分支同时是 Termux 的更新源。本地合并保留个人 Gemini 4、原始 PDF 与工具调用实现。
 
+## 018 · 2026-11-18（Asia/Shanghai）· 修复 Git 管理组件的两项 critical
+
+- 用户要求说明电脑与 Termux 的实际影响，并在可兼容升级时修复，确认本次发布到个人 `main` 和 Termux 更新源。基线 `41ac01415`，已有日志和启动器说明单独保留。
+- 对照 npm 公共注册表、锁文件及 GitHub 安全公告。生产依赖为 `simple-git@3.36.0` 和 `@simple-git/argv-parser@1.1.1`。[CVE-2026-102828](https://github.com/advisories/GHSA-x6jw-m9v5-85vh) 涉及 Git 提交附注的命令配置校验，[CVE-2026-102829](https://github.com/advisories/GHSA-v5rq-49vh-5v5c) 涉及编辑器环境变量校验。两项都需不受信任的一方能影响有关配置或环境，并使 Git 执行相应操作。可能的执行权限与启动酒馆的用户或 Termux 应用相同。
+- 使用点涉及版本查询、扩展管理、服务端插件管理。聊天、模型流式回复、原始 PDF 和图片处理不依赖这两项功能。检查到的管理入口使用固定的 Git 操作，没有把任意 Git 配置或编辑器环境直接交给聊天请求。电脑现有配置只监听本机且关闭服务端插件；Termux 启动脚本默认只监听本机，`st update` 使用系统 Git。未检查手机的实际安装配置。
+- 更新 `package.json` 和锁文件，将 `simple-git` 升至 4.1.0，传递依赖解析为 `@simple-git/argv-parser` 3.0.0。按 [v4 迁移说明](https://github.com/steveukx/git-js/releases/tag/simple-git%404.0.0) 迁移 5 处引用到命名导出，沿用默认安全检查。日常 Windows 安装中只更换 2 个包，生产依赖路径和版本与独立 `npm ci` 安装一致。
+- 采用同一 npm 注册表的生产审计，critical 从 2 降至 0，总计从 54 降至 52（40 high、12 moderate）。包含开发依赖时 critical 同为 0。隔离的 Windows 实例通过 HTTP 管理入口从合成仓库安装扩展、查询版本、列出与切换分支、识别可用更新并快进；插件 CLI 也完成安装和快进。验证使用全新数据和测试仓库。Windows 启动器检查、JS 语法、ESLint、Termux 的 14 项管理测试均通过。
+- 完整 Jest 31 套件、655 项全部通过（76.5 秒），含 65 秒的本地 HTTP/2 慢测。未调用 Google 生成或改动已安装的第三方扩展。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

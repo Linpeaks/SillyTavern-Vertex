@@ -8,7 +8,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { default as git, CheckRepoActions } from 'simple-git';
+import { CheckRepoActions, simpleGit } from 'simple-git';
 import { createGitClient } from './src/git/client.js';
 import { color } from './src/util.js';
 
@@ -50,7 +50,7 @@ async function updatePlugins() {
         try {
             console.log(`Updating plugin ${color.green(directory)}...`);
             const pluginPath = path.join(pluginsPath, directory);
-            const pluginRepo = git(pluginPath);
+            const pluginRepo = simpleGit(pluginPath);
 
             const isRepo = await pluginRepo.checkIsRepo(CheckRepoActions.IS_REPO_ROOT);
             if (!isRepo) {
