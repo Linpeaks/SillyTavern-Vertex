@@ -368,7 +368,7 @@ export async function getFileAttachment(url) {
         const text = await result.text();
         return text;
     } catch (error) {
-        toastr.error(error, t`Could not download file`);
+        toastr.error(String(error?.message ?? error), t`Could not download file`);
         console.error('Could not download file', error);
     }
 }
@@ -589,6 +589,9 @@ export async function appendFileContent(message, messageText) {
             if (fileText) {
                 fileTexts.push(fileText);
             }
+        }
+        if (!fileTexts.length) {
+            return messageText;
         }
         const mergedFileTexts = fileTexts.join('\n\n') + '\n\n';
         message.extra.fileLength = mergedFileTexts.length;

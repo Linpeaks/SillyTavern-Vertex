@@ -28,6 +28,24 @@ function fixture(model = 'gemini-4-argon') {
     return { context, fetch, getFileAttachment, deleteFileFromServer, getBase64Async, input, reset };
 }
 
+test('missing text attachments leave the body intact and clear a stale prefix length', async () => {
+    const f = fixture();
+    f.getFileAttachment.mockResolvedValue(undefined);
+    const message = { extra: { files: [{ url: 'missing.txt' }], fileLength: 14 } };
+    expect(await f.context.appendFileContent(message, 'question')).toBe('question');
+    expect(message.extra).not.toHaveProperty('fileLength');
+});
+
+test('a missing text attachment does not remove the following native PDF', async () => {
+    const f = fixture();
+    f.getFileAttachment.mockResolvedValue(undefined);
+    const message = { extra: { files: [{ url: 'missing.txt' }, file] } };
+    const prefix = `${file.name}\n${references.nativePdfMarker(file)}\n\n`;
+    expect(await f.context.appendFileContent(message, 'question')).toBe(prefix + 'question');
+    expect(message.extra.fileLength).toBe(prefix.length);
+    expect(f.getFileAttachment.mock.calls).toEqual([['missing.txt']]);
+});
+
 test('native references retain filename and coexist with unchanged text attachments', async () => {
     const f = fixture();
     const message = { extra: { files: [{ ...file }, { url: 'legacy.txt' }, { text: 'cached text' }] } };

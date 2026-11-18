@@ -692,6 +692,11 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - Playwright 使用独立 Chrome、临时数据根与 18186 端口，禁用扩展自动更新，发现列表只提供内置图片描述扩展。实测两个聊天来源均可选择 Hydrogen 并在刷新后恢复，上下文控件上限为 1,048,576。图片描述两个来源的四款型号分别只出现一次，切换与刷新均选中对应供应商的选项。模拟与浏览器验证没有调用 Google 生成，未测账号权限、实际识图或 TUN。原有自定义扩展的 Argon 条目仍由该扩展管理，用户可直接选内置分组。
 - Git 起点 `codex/image-preset-attachments` / `c3fc126d1`。本轮本地提交只收录模型相关源码、测试和本节，起点已有的日志第 012–014 节及 `launcher/README.md` 单独保留。日常酒馆重启并刷新页面后可选用内置模型。远端与手机部署未更新。
 
+## 017A · 2026-11-18（Asia/Shanghai）· 普通附件缺失时保留正文
+
+- 用户同意选取上轮列出的四项官方修复，并确认通过验证后发布至个人 `main` 与 Termux 更新源。起点为 `76f33a29e`，分支 `codex/image-preset-attachments`。已有未提交的日志和启动器说明单独保留。
+- 采用 [上游附件修复](https://github.com/SillyTavern/SillyTavern/commit/11520ce4afa23fd0c137701253f8450389cbb4e7)。`public/scripts/chats.js` 将下载错误以字符串交给提示框，普通附件全部不可用时直接返回消息原文。合成 404 对照中，前后各发起 1 次下载，附加到正文的空前缀从 2 字节降至 0。补充两项附件回归，验证旧前缀长度会清除，同一消息里仍可用的原始 PDF 保留在原位置。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
