@@ -702,6 +702,11 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 采用 [上游依赖补丁 #6210](https://github.com/SillyTavern/SillyTavern/pull/6210)。仅调整 `package-lock.json`，`package.json` 与现有版本范围一致。在独立目录按新锁干净安装 672 个生产包；确认本机无酒馆 Node 服务运行后，在日常安装中按锁更新，安装路径与版本同干净安装的差异为 0，锁文件与上游候选逐字节一致。
 - 使用同一 npm 公共注册表、同一时段及两份锁文件做对照。包括开发依赖时，审计报告从 83 项降至 61 项；只计生产依赖时从 75 项降至 54 项（减少 28%），其中 critical 从 4 降至 2、high 从 54 降至 40。开发依赖和生产依赖都未使用强制大版本升级。这些为审计报告计数。
 
+## 017C · 2026-11-18（Asia/Shanghai）· 允许停止等待最终 token 计数
+
+- 采用 [上游流式停止修复 #6158](https://github.com/SillyTavern/SillyTavern/pull/6158)。`StreamingProcessor` 等待最终计数时监听现有 abort 信号，停止后即可收尾并释放监听器。继续使用同一次生成的文本与现有传输逻辑。
+- 对比生产类的 `onProgressStreaming` 与 `onStopStreaming`，给计数器注入相同的 250 ms 延迟，每个版本各测 5 次。计数已开始后按停止，到收尾返回的中位数从 263.01 ms 降至 0.03 ms。两边均只请求一次计数。正常结束和进入收尾前已停止的对照均能记录实际计数；此实验度量本地等待，不度量模型生成速度。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
