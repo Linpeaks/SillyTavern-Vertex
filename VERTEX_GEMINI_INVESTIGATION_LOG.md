@@ -707,6 +707,13 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 采用 [上游流式停止修复 #6158](https://github.com/SillyTavern/SillyTavern/pull/6158)。`StreamingProcessor` 等待最终计数时监听现有 abort 信号，停止后即可收尾并释放监听器。继续使用同一次生成的文本与现有传输逻辑。
 - 对比生产类的 `onProgressStreaming` 与 `onStopStreaming`，给计数器注入相同的 250 ms 延迟，每个版本各测 5 次。计数已开始后按停止，到收尾返回的中位数从 263.01 ms 降至 0.03 ms。两边均只请求一次计数。正常结束和进入收尾前已停止的对照均能记录实际计数；此实验度量本地等待，不度量模型生成速度。
 
+## 017D · 2026-11-18（Asia/Shanghai）· 保存正文与思考编辑
+
+- 合入[保留消息原始文本 #6184](https://github.com/SillyTavern/SillyTavern/pull/6184) 与[编辑框关闭修复 #6212](https://github.com/SillyTavern/SillyTavern/pull/6212)。正文与思考同时编辑时保留 Markdown、空行和显示时被正则隐藏的内容。两个上游提交的浏览器用例随源码一起合入。
+- 首次浏览器回归 25 项中有 3 项失败。将同一隔离服务的正文与思考前端脚本切回合并前 `76f33a29e`，相同依赖与浏览器复现相同的 3 项失败。用例重新初始化处理器，已移除的思考编辑框仍收到保存回调，旧代码将缺失的值转成字符串。已补充编辑框存在性检查，保留用户有意保存的空文本。原有断言保持不变。
+- 终验覆盖 655 项 Jest（含 65 秒本地 HTTP/2 慢测）、40 项 Playwright（原文、思考、工具消息、滑动切换与渲染）以及 14 项 Termux 管理测试。浏览器连接从 Git 归档构建的独立实例，使用合成聊天与新锁文件的干净依赖。日常 Windows 启动器 `-Check`、ESLint、JS 语法及 Git 差异检查通过，未调用真实模型。
+- 本次按四项分别提交。发布目标为 `Linpeaks/SillyTavern-Vertex:main`，该分支同时是 Termux 的更新源。本地合并保留个人 Gemini 4、原始 PDF 与工具调用实现。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

@@ -8169,8 +8169,10 @@ export function setGenerationParamsFromPreset(preset) {
 // Common code for message editor done and auto-save
 function updateMessage(div) {
     const mesBlock = div.closest('.mes_block');
-    let text = mesBlock.find('.edit_textarea').val()
-        ?? mesBlock.find('.mes_text').text();
+    let text = mesBlock.find('.edit_textarea').val();
+    if (typeof text !== 'string') {
+        return;
+    }
     const mesElement = div.closest('.mes');
     const mes = chat[mesElement.attr('mesid')];
 
@@ -8247,7 +8249,11 @@ function openMessageDelete(fromSlashCommand, deleteToolCalls = true) {
 }
 
 function messageEditAuto(div) {
-    const { mesBlock, text, mes, bias } = updateMessage(div);
+    const updatedMessage = updateMessage(div);
+    if (!updatedMessage) {
+        return;
+    }
+    const { mesBlock, text, mes, bias } = updatedMessage;
 
     mesBlock.find('.mes_text').val('');
     mesBlock.find('.mes_text').val(messageFormatting(
@@ -8431,7 +8437,13 @@ async function messageEditDone(div) {
         return;
     }
 
-    let { mesBlock, text, mes, bias } = updateMessage(div);
+    const updatedMessage = updateMessage(div);
+    if (!updatedMessage) {
+        // The editor textarea is gone, so there is nothing to save. Close the editor instead of leaving it half open.
+        await messageEditCancel(this_edit_mes_id);
+        return;
+    }
+    let { mesBlock, text, mes, bias } = updatedMessage;
 
     await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);
     text = chat[this_edit_mes_id]?.mes ?? text;
