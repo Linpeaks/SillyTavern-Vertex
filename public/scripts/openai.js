@@ -77,14 +77,14 @@ import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashComma
 import { renderTemplateAsync } from './templates.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
 import { syncNanoGptProvidersForModel, syncOpenRouterProvidersForModel, updateNanoGptProvidersWarning, updateOpenRouterProvidersWarning } from './textgen-models.js';
 import { getNativePdfReferences, assertNativePdfReferences, validateNativePdfRequest, estimateNativePdfTokens } from './native-pdf.js';
 import { getGoogleProtectedMediaTypes, mediaPartSignatures, assertMediaParts } from './media-preservation.js';
-import { GEMINI_3_8_FLASH, GEMINI_MILLION_TOKENS, isGemini4Model, limitGeminiOutputTokens } from './gemini-models.js';
+import { GEMINI_3_8_FLASH, GEMINI_MILLION_TOKENS, getGoogleFlexError, isGemini4Model, limitGeminiOutputTokens } from './gemini-models.js';
 
 export {
     openai_messages_count,
@@ -356,6 +356,8 @@ export const settingsToUpdate = {
     custom_include_headers: ['#custom_include_headers', 'custom_include_headers', false, true],
     custom_prompt_post_processing: ['#custom_prompt_post_processing', 'custom_prompt_post_processing', false, true],
     google_model: ['#model_google_select', 'google_model', false, true],
+    google_flex: ['#google_flex', 'google_flex', true, true],
+    vertexai_flex: ['#vertexai_flex', 'vertexai_flex', true, true],
     vertexai_model: ['#model_vertexai_select', 'vertexai_model', false, true],
     zai_model: ['#model_zai_select', 'zai_model', false, true],
     zai_endpoint: ['#zai_endpoint', 'zai_endpoint', false, true],
@@ -443,6 +445,8 @@ const default_settings = {
     openai_model: 'gpt-5.6-terra',
     claude_model: 'claude-sonnet-5',
     google_model: 'gemini-3.7-flash',
+    google_flex: false,
+    vertexai_flex: false,
     vertexai_model: 'gemini-3.7-flash',
     ai21_model: 'jamba-large',
     mistralai_model: 'mistral-large-latest',
@@ -2923,6 +2927,12 @@ export async function createGenerationParameters(settings, model, type, messages
 
     if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(settings.chat_completion_source)) {
         generate_data.max_tokens = limitGeminiOutputTokens(model, generate_data.max_tokens, stream);
+        const isVertex = settings.chat_completion_source === chat_completion_sources.VERTEXAI;
+        if ((isVertex ? settings.vertexai_flex : settings.google_flex) === true) {
+            const error = getGoogleFlexError(model, isVertex, settings.vertexai_region);
+            if (error) throw new Error(translate(error));
+            generate_data.google_use_flex = true;
+        }
         const stopStringsLimit = 5;
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.stop = getCustomStoppingStrings(stopStringsLimit).slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
@@ -4400,6 +4410,8 @@ function loadOpenAISettings(data, settings) {
     $('#bind_preset_to_connection').prop('checked', oai_settings.bind_preset_to_connection);
     $('#openai_external_category').toggle(oai_settings.show_external_models);
     $('.reverse_proxy_warning').toggle(oai_settings.reverse_proxy !== '');
+    updateGoogleFlexControl('google_flex', oai_settings.google_model, false, oai_settings.google_flex);
+    updateGoogleFlexControl('vertexai_flex', oai_settings.vertexai_model, true, oai_settings.vertexai_flex);
 
     // Don't display Service Account JSON in textarea - it's stored in backend secrets
     $('#vertexai_service_account_json').val('');
@@ -5151,6 +5163,14 @@ function getMaxContextOpenAI(value) {
     return max_128k;
 }
 
+export function updateGoogleFlexControl(id, model, isVertex, checked) {
+    const error = getGoogleFlexError(model, isVertex, oai_settings.vertexai_region);
+    // A previously selected tier must remain possible to turn off after a model or region change.
+    $(`#${id}`).prop('checked', checked === true).prop('disabled', Boolean(error) && !checked);
+    const message = error ? translate(error) : t`Lower cost, longer waits. Busy requests may be rejected.`;
+    $(`#${id}_hint`).text(error && checked ? `${message} ${t`Turn off Flex to use standard pricing.`}` : message);
+}
+
 /**
  * Get the maximum context size for Gemini models based on model identifier and optional model list.
  * @param {string} model Model identifier
@@ -5559,11 +5579,13 @@ async function onModelChange() {
 
         console.log('Google model changed to', value);
         oai_settings.google_model = value;
+        updateGoogleFlexControl('google_flex', value, false, oai_settings.google_flex);
     }
 
     if ($(this).is('#model_vertexai_select')) {
         console.log('Vertex AI model changed to', value);
         oai_settings.vertexai_model = value;
+        updateGoogleFlexControl('vertexai_flex', value, true, oai_settings.vertexai_flex);
     }
 
     if ($(this).is('#model_mistralai_select')) {
@@ -7359,9 +7381,16 @@ export function initOpenAI() {
     $('#model_claude_select').on('change', onModelChange);
     $('#model_google_select').on('change', onModelChange);
     $('#model_vertexai_select').on('change', onModelChange);
+    $('#google_flex, #vertexai_flex').on('input', function () {
+        const isVertex = this.id === 'vertexai_flex';
+        oai_settings[this.id] = this.checked;
+        updateGoogleFlexControl(this.id, isVertex ? oai_settings.vertexai_model : oai_settings.google_model, isVertex, this.checked);
+        saveSettingsDebounced();
+    });
     $('#vertexai_auth_mode').on('change', onVertexAIAuthModeChange);
     $('#vertexai_region').on('input', function () {
         oai_settings.vertexai_region = String($(this).val());
+        updateGoogleFlexControl('vertexai_flex', oai_settings.vertexai_model, true, oai_settings.vertexai_flex);
         saveSettingsDebounced();
     });
     $('#vertexai_express_project_id').on('input', function () {

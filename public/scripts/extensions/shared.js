@@ -1,6 +1,7 @@
 import { CONNECT_API_MAP, createModelIcon, getRequestHeaders, substituteParams } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
-import { t } from '../i18n.js';
+import { t, translate } from '../i18n.js';
+import { getGoogleFlexError } from '../gemini-models.js';
 import { oai_settings, proxies, ZAI_ENDPOINT, POLLINATIONS_ENDPOINT } from '../openai.js';
 import { SECRET_KEYS, secret_state } from '../secrets.js';
 import { textgen_types, textgenerationwebui_settings } from '../textgen-settings.js';
@@ -57,6 +58,12 @@ export async function getMultimodalCaption(base64Img, prompt) {
         api: extension_settings.caption.multimodal_api || 'openai',
         model: extension_settings.caption.multimodal_model || 'gpt-4-turbo',
     };
+
+    if (['google', 'vertexai'].includes(requestBody.api) && extension_settings.caption[`${requestBody.api}_flex`] === true) {
+        const error = getGoogleFlexError(requestBody.model, requestBody.api === 'vertexai', oai_settings.vertexai_region);
+        if (error) throw new Error(translate(error));
+        requestBody.google_use_flex = true;
+    }
 
     // Add Vertex AI specific parameters if using Vertex AI
     if (extension_settings.caption.multimodal_api === 'vertexai') {
@@ -155,6 +162,10 @@ export async function getMultimodalCaption(base64Img, prompt) {
     });
 
     if (!apiResult.ok) {
+        if (requestBody.google_use_flex) {
+            const error = await apiResult.json().catch(() => null);
+            if (error?.message) throw new Error(translate(error.message));
+        }
         throw new Error('Failed to caption image via Multimodal API.');
     }
 

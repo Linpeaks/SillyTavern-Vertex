@@ -1,3 +1,4 @@
+/* eslint-disable playwright/no-standalone-expect -- Jest test.each is not a Playwright test. */
 import { once } from 'node:events';
 import express from 'express';
 import { afterAll, beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globals';
@@ -35,7 +36,7 @@ beforeAll(async () => {
     jest.spyOn(console, 'info').mockImplementation(() => {});
     const { router } = await import('../src/endpoints/google.js');
     const app = express();
-    app.use(express.json());
+    app.use(express.json({ limit: '21mb' }));
     app.use((request, _response, next) => {
         request.user = { directories: {} };
         next();
@@ -120,4 +121,89 @@ test.each(['gemini-4-hydrogen', 'gemini-4-neon'])('%s preserves the no-caption e
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
         expect.objectContaining({ headers: expect.objectContaining({ 'x-goog-api-key': 'synthetic-studio-key' }) }),
     );
+});
+
+describe('Google caption Flex', () => {
+    const project = { vertexai_auth_mode: 'express', vertexai_express_project_id: 'synthetic-project' };
+
+    test('sends the top-level AI Studio service tier once and returns the caption', async () => {
+        const response = await requestCaption({ api: 'google', model: 'gemini-4-neon', google_use_flex: true });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ caption: 'A blue square.' });
+        expect(upstreamFetch).toHaveBeenCalledTimes(1);
+        const [[url, request]] = upstreamFetch.mock.calls;
+        expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-4-neon:generateContent');
+        expect(JSON.parse(request.body).service_tier).toBe('flex');
+        const headers = new Headers(request.headers);
+        expect(headers.has('X-Vertex-AI-LLM-Request-Type')).toBe(false);
+        expect(headers.has('X-Vertex-AI-LLM-Shared-Request-Type')).toBe(false);
+    });
+
+    test('sends the Vertex Flex headers once on the global endpoint and returns the caption', async () => {
+        const response = await requestCaption({
+            ...project, model: 'gemini-3.8-flash', vertexai_region: 'global', google_use_flex: true,
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ caption: 'A blue square.' });
+        expect(upstreamFetch).toHaveBeenCalledTimes(1);
+        const [[url, request]] = upstreamFetch.mock.calls;
+        expect(url).toBe('https://aiplatform.googleapis.com/v1/projects/synthetic-project/locations/global/publishers/google/models/gemini-3.8-flash:generateContent');
+        expect(JSON.parse(request.body)).not.toHaveProperty('service_tier');
+        const headers = new Headers(request.headers);
+        expect(headers.get('X-Vertex-AI-LLM-Request-Type')).toBe('shared');
+        expect(headers.get('X-Vertex-AI-LLM-Shared-Request-Type')).toBe('flex');
+    });
+
+    describe.each([
+        ['google', 'gemini-4-neon'],
+        ['vertexai', 'gemini-3.8-flash'],
+    ])('%s Flex opt-in and upstream errors', (api, model) => {
+        test.each([undefined, false])('omits Flex settings with google_use_flex=%s', async google_use_flex => {
+            const response = await requestCaption({ ...project, api, model, google_use_flex });
+            expect(response.status).toBe(200);
+            expect(upstreamFetch).toHaveBeenCalledTimes(1);
+            const [[, request]] = upstreamFetch.mock.calls;
+            expect(JSON.parse(request.body)).not.toHaveProperty('service_tier');
+            const headers = new Headers(request.headers);
+            expect(headers.has('X-Vertex-AI-LLM-Request-Type')).toBe(false);
+            expect(headers.has('X-Vertex-AI-LLM-Shared-Request-Type')).toBe(false);
+        });
+
+        test.each([429, 503])('returns the upstream %s capacity response after one submission', async status => {
+            const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+            try {
+                upstreamFetch.mockResolvedValueOnce(new Response(JSON.stringify({
+                    error: { code: status, message: 'Synthetic capacity error' },
+                }), { status }));
+                const response = await requestCaption({ ...project, api, model, google_use_flex: true });
+                expect(response.status).toBe(status);
+                expect(await response.json()).toEqual({ error: true, message: 'Synthetic capacity error' });
+                expect(upstreamFetch).toHaveBeenCalledTimes(1);
+            } finally {
+                errorLog.mockRestore();
+            }
+        });
+    });
+
+    test.each([
+        ['gemini-4-neon', 'global'],
+        ['gemini-2.5-pro', 'global'],
+        ['gemini-3.8-flash', 'us-central1'],
+    ])('rejects Vertex Flex for %s in %s before submitting', async (model, vertexai_region) => {
+        const response = await requestCaption({ ...project, model, vertexai_region, google_use_flex: true });
+        expect(response.status).toBe(400);
+        expect(await response.text()).toMatch(/flex/i);
+        expect(upstreamFetch).not.toHaveBeenCalled();
+    });
+
+    test('rejects a Vertex Flex caption whose complete JSON exceeds the byte limit', async () => {
+        const data = 'A'.repeat(20_000_000 - 4);
+        const response = await requestCaption({
+            ...project, model: 'gemini-3.8-flash', google_use_flex: true,
+            image: `data:image/png;base64,${data}`,
+        });
+        expect(response.status).toBe(400);
+        expect(await response.text()).toMatch(/20 MB/);
+        expect(upstreamFetch).not.toHaveBeenCalled();
+    });
 });

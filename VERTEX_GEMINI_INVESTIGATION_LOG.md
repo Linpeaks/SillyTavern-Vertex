@@ -729,6 +729,13 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - AI Studio 与 Vertex 的聊天、图片描述菜单均内置 Neon。三个 Vertex 位置为 `global`、`us`、`eu`。Neon 的输入与输出合用 1,048,576 token；酒馆单次流式或非流式请求最多输出 65,536 token。Auto 使用模型默认 HIGH；Maximum 发送 XHIGH。沿用现有图像、音视频、完整工具调用、签名，以及原生 Vertex 的 PDF 入口和本地预算。保留已有默认模型。
 - 定向验证覆盖两种来源的思考与上下文、三个 Vertex 位置、合成图片和原始 PDF、流式工具正文、调用 ID 及后续回传。四个内置模型入口中 Neon 各出现一次。未用真实账号生成。
 
+## 019B · 2026-11-19（Asia/Shanghai）· 区分 Google 两个 API 的 Flex 计费
+
+- [AI Studio GenerateContent Flex](https://ai.google.dev/gemini-api/docs/generate-content/flex-inference) 列出 Neon。按[官方定价](https://aistudio.google.com/docs/pricing#gemini-4-neon)，付费项目每百万输入 / 输出 token 的 Standard 为 $3 / $15，Flex 为 $1.50 / $7.50。Flex 可能排队，容量不足会拒绝请求。[Vertex Flex PayGo](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/flex-paygo?hl=en) 仅列部分 3.8 Flash 及更早型号，且限 `global`。Vertex 上 Neon 的 Batch 价格不代表在线 Flex 支持。
+- 两个连接的聊天设置与图片描述设置分别保存 Flex 选择，初始为关闭。AI Studio 使用请求体顶层 `service_tier: "flex"`；支持的 Vertex 请求使用 `X-Vertex-AI-LLM-Request-Type: shared` 和 `X-Vertex-AI-LLM-Shared-Request-Type: flex`。界面和后端共用型号、区域规则。已有 Flex 选择与新型号或区域不兼容时可关闭，继续要求 Flex 的请求会被阻止。Vertex 的 20 MB 上限按完整序列化请求的 UTF-8 字节计算。保留单次提交，容量错误不自动重试或切换到更贵的服务。
+- 隔离 Chrome / Playwright 实测 AI Studio Neon 可选 Flex、Vertex Neon 仅可用标准档、Vertex 3.8 Flash 可在 global 使用 Flex；切到 eu 后需关闭 Flex 才能按标准价继续。图片描述独立构造一次合成 Flex 请求，刷新后模型与两个来源的选择均恢复。Jest 验证普通与流式双来源协议、429/503、一次提交、Vertex 20,000,000 与 20,000,001 字节边界。未测真实 Google 请求、账号资格、账单或手机实机。
+- 最终全量 Jest 31 套件共 727 项通过（78.5 秒，包含 65 秒 HTTP/2 慢测）。Termux 管理回归 14 项通过。改动 JS 的 ESLint、语法和 Git 差异检查通过。按项目常规快进发布至个人 main，旧有未提交说明留在本机。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

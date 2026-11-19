@@ -10,7 +10,7 @@ import lodash from 'lodash';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 import { GEMINI_SAFETY, VERTEX_SAFETY } from '../constants.js';
 import { delay, getConfigValue, trimTrailingSlash } from '../util.js';
-import { getVertexGeminiLocation } from '../../public/scripts/gemini-models.js';
+import { VERTEX_FLEX_MAX_BYTES, VERTEX_FLEX_SIZE_ERROR, applyGoogleFlexTier, getGoogleFlexError, getVertexGeminiLocation } from '../../public/scripts/gemini-models.js';
 
 const API_MAKERSUITE = 'https://generativelanguage.googleapis.com';
 const API_VERTEX_AI = 'https://us-central1-aiplatform.googleapis.com';
@@ -238,6 +238,12 @@ router.post('/caption-image', async (request, response) => {
         const mimeType = request.body.image.split(';')[0].split(':')[1];
         const base64Data = request.body.image.split(',')[1];
         const model = request.body.model || 'gemini-2.0-flash';
+        const useFlex = request.body.google_use_flex === true;
+        const isVertex = request.body.api === 'vertexai';
+        const flexError = useFlex && getGoogleFlexError(model, isVertex, request.body.vertexai_region);
+        if (flexError) {
+            return response.status(400).send({ error: true, message: flexError });
+        }
         const { url, headers, apiName, safetySettings } = await getGoogleApiConfig(request, model);
 
         const body = {
@@ -255,17 +261,25 @@ router.post('/caption-image', async (request, response) => {
             safetySettings: safetySettings,
         };
 
+        if (useFlex) applyGoogleFlexTier(body, headers, isVertex);
+        const serializedBody = JSON.stringify(body);
+        if (useFlex && isVertex && Buffer.byteLength(serializedBody) > VERTEX_FLEX_MAX_BYTES) {
+            return response.status(400).send({ error: true, message: VERTEX_FLEX_SIZE_ERROR });
+        }
         console.debug(`${apiName} captioning request`, model, body);
 
         const result = await fetch(url, {
-            body: JSON.stringify(body),
+            body: serializedBody,
             method: 'POST',
             headers: headers,
         });
 
         if (!result.ok) {
-            const error = await result.json();
+            const error = await result.json().catch(() => null);
             console.error(`${apiName} API returned error: ${result.status} ${result.statusText}`, error);
+            if (useFlex && [429, 503].includes(result.status)) {
+                return response.status(result.status).send({ error: true, message: error?.error?.message || 'Flex capacity is unavailable. Try again later.' });
+            }
             return response.status(500).send({ error: true });
         }
 

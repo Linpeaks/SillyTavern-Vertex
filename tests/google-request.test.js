@@ -1,9 +1,10 @@
+/* eslint-disable playwright/no-standalone-expect -- Jest test.each is not a Playwright test. */
 import fs from 'node:fs';
 import vm from 'node:vm';
 import util from 'node:util';
 import { EventEmitter } from 'node:events';
 import { beforeAll, describe, expect, jest, test } from '@jest/globals';
-import { Response } from 'node-fetch';
+import { Headers, Response } from 'node-fetch';
 import * as constants from '../src/constants.js';
 import * as geminiModels from '../public/scripts/gemini-models.js';
 
@@ -26,16 +27,17 @@ if (!handlerSource) throw new Error('Google request handler not found');
 const xhighModels = ['gemini-4-hydrogen', 'gemini-4-neon'];
 const gemini4Models = ['gemini-4-argon', 'gemini-4-carbon', ...xhighModels];
 
-async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, result = null, expectedStatus = 200) {
+async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, result = null, expectedStatus = 200, upstreamStatus = 200) {
     const fetchMock = jest.fn(async () => new Response(JSON.stringify(result ?? {
         candidates: [{ content: { parts: [{ text: 'synthetic reply' }] } }],
-    }), { status: 200 }));
-    const forward = jest.fn(async (upstream, response) => response.send(await upstream.json()));
+    }), { status: upstreamStatus }));
+    const forward = jest.fn(async (upstream, response) => response.status(upstream.status).send(await upstream.json()));
     const context = vm.createContext({
-        ...constants, ...converters, ...geminiModels, URL, AbortController, util,
+        ...constants, ...converters, ...geminiModels, URL, AbortController, Buffer, util,
         API_VERTEX_AI: 'https://aiplatform.googleapis.com',
         API_MAKERSUITE: 'https://generativelanguage.googleapis.com',
         getConfigValue: (_key, fallback) => fallback,
+        tryParse: value => { try { return JSON.parse(value); } catch { return undefined; } },
         getVertexAIAuth: async request => ({ authType: request.body.vertexai_auth_mode || 'full', authHeader: 'Bearer synthetic' }),
         getProjectIdFromServiceAccount: account => account.project_id,
         SECRET_KEYS: { VERTEXAI_SERVICE_ACCOUNT: 'service' },
@@ -67,12 +69,19 @@ async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, 
     });
     await context.sendMakerSuiteRequest(request, response);
     expect(response.statusCode).toBe(expectedStatus);
-    expect(fetchMock).toHaveBeenCalledTimes(expectedStatus === 200 ? 1 : 0);
-    expect(forward).toHaveBeenCalledTimes(expectedStatus === 200 && request.body.stream ? 1 : 0);
-    expect(response.value?.error).toBe(expectedStatus === 200 ? undefined : true);
+    const expectedUpstream = expectedStatus === 200 || upstreamStatus !== 200;
+    expect(fetchMock).toHaveBeenCalledTimes(expectedUpstream ? 1 : 0);
+    expect(forward).toHaveBeenCalledTimes(expectedUpstream && request.body.stream ? 1 : 0);
+    if (upstreamStatus === 200) expect(response.value?.error).toBe(expectedStatus === 200 ? undefined : true);
     expect(response.listenerCount('close')).toBe(0);
     const outbound = fetchMock.mock.calls[0];
-    return { body: outbound && JSON.parse(outbound[1].body), url: outbound?.[0], response };
+    return {
+        body: outbound && JSON.parse(outbound[1].body),
+        bodyBytes: outbound && Buffer.byteLength(outbound[1].body),
+        headers: new Headers(outbound?.[1].headers),
+        url: outbound?.[0],
+        response,
+    };
 }
 
 describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', sourceName => {
@@ -268,4 +277,83 @@ test.each(gemini4Models)('%s honors its unified context cap even when unlocked',
     vm.runInContext(frontend.match(/^function getGeminiMaxContext\([^]*?^}/m)[0], context);
     expect(context.getGeminiMaxContext(model, false)).toBe(1_048_576);
     expect(context.getGeminiMaxContext(model, true)).toBe(1_048_576);
+});
+
+describe('Google chat Flex', () => {
+    test.each([false, true])('uses a top-level AI Studio service tier with stream=%s', async stream => {
+        const { body, headers, url } = await makeRequest('makersuite', 'low', false, {
+            model: 'gemini-4-neon', google_use_flex: true, stream,
+        });
+        const endpoint = new URL(url);
+        expect(endpoint.origin).toBe('https://generativelanguage.googleapis.com');
+        expect(endpoint.pathname).toBe(`/v1beta/models/gemini-4-neon:${stream ? 'streamGenerateContent' : 'generateContent'}`);
+        expect(endpoint.searchParams.get('alt')).toBe(stream ? 'sse' : null);
+        expect(body.service_tier).toBe('flex');
+        expect(body.generationConfig).not.toHaveProperty('service_tier');
+        expect(headers.has('X-Vertex-AI-LLM-Request-Type')).toBe(false);
+        expect(headers.has('X-Vertex-AI-LLM-Shared-Request-Type')).toBe(false);
+    });
+
+    test.each([false, true])('uses Vertex shared and flex headers on global with stream=%s', async stream => {
+        const { body, headers, url } = await makeRequest('vertexai', 'low', false, {
+            model: 'gemini-3.8-flash', vertexai_region: 'global', google_use_flex: true, stream,
+        });
+        const endpoint = new URL(url);
+        expect(endpoint.origin).toBe('https://aiplatform.googleapis.com');
+        expect(endpoint.pathname).toBe(`/v1/projects/synthetic-project/locations/global/publishers/google/models/gemini-3.8-flash:${stream ? 'streamGenerateContent' : 'generateContent'}`);
+        expect(endpoint.searchParams.get('alt')).toBe(stream ? 'sse' : null);
+        expect(body).not.toHaveProperty('service_tier');
+        expect(headers.get('X-Vertex-AI-LLM-Request-Type')).toBe('shared');
+        expect(headers.get('X-Vertex-AI-LLM-Shared-Request-Type')).toBe('flex');
+    });
+
+    describe.each([
+        ['makersuite', 'gemini-4-neon'],
+        ['vertexai', 'gemini-3.8-flash'],
+    ])('%s Flex opt-in and upstream errors', (sourceName, model) => {
+        test.each([undefined, false])('omits Flex settings with google_use_flex=%s', async google_use_flex => {
+            const setting = google_use_flex === undefined ? {} : { google_use_flex };
+            const { body, headers } = await makeRequest(sourceName, 'low', false, { model, ...setting });
+            expect(body).not.toHaveProperty('service_tier');
+            expect(headers.has('X-Vertex-AI-LLM-Request-Type')).toBe(false);
+            expect(headers.has('X-Vertex-AI-LLM-Shared-Request-Type')).toBe(false);
+        });
+
+        test.each([[429, false], [503, false], [429, true], [503, true]])('returns upstream capacity status %s with stream=%s after one submission', async (status, stream) => {
+            const capacityError = { error: { code: status, message: 'Synthetic capacity error' } };
+            const { response } = await makeRequest(sourceName, 'low', false, {
+                model, google_use_flex: true, stream,
+            }, capacityError, status, status);
+            expect(response.value).toEqual(capacityError);
+        });
+    });
+
+    test.each([
+        ['gemini-4-neon', 'global'],
+        ['gemini-2.5-pro', 'global'],
+        ['gemini-3.8-flash', 'us-central1'],
+    ])('rejects Vertex Flex for %s in %s before submitting', async (model, vertexai_region) => {
+        const { response } = await makeRequest('vertexai', 'low', false, {
+            model, vertexai_region, google_use_flex: true,
+        }, null, 400);
+        expect(response.value.message).toMatch(/flex/i);
+    });
+
+    test('enforces the Vertex Flex UTF-8 limit on the entire serialized request', async () => {
+        const limit = 20_000_000;
+        const flexRequest = prompt => makeRequest('vertexai', 'low', false, {
+            model: 'gemini-3.8-flash', google_use_flex: true,
+            messages: [{ role: 'user', content: prompt }],
+        });
+        const prompt = 'Synthetic prompt';
+        const { bodyBytes } = await flexRequest(prompt);
+        const paddingBytes = limit - bodyBytes;
+        const atLimit = prompt + '界'.repeat(Math.floor(paddingBytes / 3)) + 'x'.repeat(paddingBytes % 3);
+        expect((await flexRequest(atLimit)).bodyBytes).toBe(limit);
+        const { response } = await makeRequest('vertexai', 'low', false, {
+            model: 'gemini-3.8-flash', google_use_flex: true,
+            messages: [{ role: 'user', content: atLimit + 'x' }],
+        }, null, 400);
+        expect(response.value.message).toMatch(/20 MB/);
+    });
 });

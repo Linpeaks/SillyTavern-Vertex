@@ -3,7 +3,7 @@ import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, rend
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParams } from '../../../script.js';
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
-import { oai_settings, POLLINATIONS_ENDPOINT } from '../../openai.js';
+import { oai_settings, POLLINATIONS_ENDPOINT, updateGoogleFlexControl } from '../../openai.js';
 import { getMultimodalCaption } from '../shared.js';
 import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
@@ -570,6 +570,12 @@ export async function init() {
         imgForm.hidden = true;
         $('#form_sheld').append(imgForm);
     }
+    function updateCaptionFlex() {
+        const { multimodal_api: api, multimodal_model: model } = extension_settings.caption;
+        if (api === 'google' || api === 'vertexai') {
+            updateGoogleFlexControl('caption_google_flex', model, api === 'vertexai', extension_settings.caption[`${api}_flex`]);
+        }
+    }
     async function switchMultimodalBlocks() {
         await addRemoteEndpointModels();
         const isMultimodal = extension_settings.caption.source === 'multimodal';
@@ -582,6 +588,7 @@ export async function init() {
         $('#caption_multimodal_block').toggle(isMultimodal);
         $('#caption_prompt_block').toggle(isMultimodal);
         $('#caption_multimodal_api').val(api);
+        updateCaptionFlex();
         // AI Studio and Vertex share model IDs but have separate options.
         modelSelect.selectedIndex = modelOptions.find(option => option.value === extension_settings.caption.multimodal_model)?.index ?? -1;
         $('#caption_multimodal_block [data-type]').each(function () {
@@ -697,8 +704,15 @@ export async function init() {
     });
     $('#caption_multimodal_model').on('change', () => {
         extension_settings.caption.multimodal_model = String($('#caption_multimodal_model').val());
+        updateCaptionFlex();
         saveSettingsDebounced();
     });
+    $('#caption_google_flex').on('input', function () {
+        extension_settings.caption[`${extension_settings.caption.multimodal_api}_flex`] = this.checked;
+        updateCaptionFlex();
+        saveSettingsDebounced();
+    });
+    $('#vertexai_region').on('input', updateCaptionFlex);
     $('#caption_altEndpoint_url').val(extension_settings.caption.alt_endpoint_url).on('input', () => {
         extension_settings.caption.alt_endpoint_url = String($('#caption_altEndpoint_url').val());
         saveSettingsDebounced();

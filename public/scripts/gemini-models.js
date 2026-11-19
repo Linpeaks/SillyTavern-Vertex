@@ -48,3 +48,44 @@ export function getVertexGeminiLocation(model, configuredRegion) {
 
     return { region, host, isMultiRegion, regionError };
 }
+
+// GenerateContent model lists differ between the Gemini Developer API and Vertex Flex PayGo.
+// https://ai.google.dev/gemini-api/docs/generate-content/flex-inference
+// https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/flex-paygo
+const sharedFlexModels = new Set([
+    GEMINI_3_8_FLASH, 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+    'gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-3-pro-image',
+]);
+const studioFlexModels = new Set([
+    GEMINI_4_ARGON, GEMINI_4_CARBON, GEMINI_4_HYDROGEN, GEMINI_4_NEON,
+    'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash-image',
+]);
+const vertexFlexModels = new Set([
+    'gemini-3.8-flash-cyber', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image',
+]);
+
+export function getGoogleFlexError(model, isVertex, region) {
+    if (isVertex) {
+        if (!sharedFlexModels.has(model) && !vertexFlexModels.has(model)) {
+            return 'Flex is unavailable for this model on Vertex AI.';
+        }
+        if (getVertexGeminiLocation(model, region).region !== 'global') {
+            return 'Vertex AI Flex requires the global region.';
+        }
+    } else if (!sharedFlexModels.has(model) && !studioFlexModels.has(model)) {
+        return 'Flex is unavailable for this model on Google AI Studio.';
+    }
+    return '';
+}
+
+export function applyGoogleFlexTier(body, headers, isVertex) {
+    if (isVertex) {
+        headers['X-Vertex-AI-LLM-Request-Type'] = 'shared';
+        headers['X-Vertex-AI-LLM-Shared-Request-Type'] = 'flex';
+    } else {
+        body.service_tier = 'flex';
+    }
+}
+
+export const VERTEX_FLEX_MAX_BYTES = 20_000_000;
+export const VERTEX_FLEX_SIZE_ERROR = 'Vertex AI Flex accepts up to 20 MB for the entire request. Reduce the prompt or attachments.';

@@ -71,7 +71,7 @@ import { getCookieSecret } from '../../users.js';
 import { fetchGoogleModels, GoogleModelsHttpError } from './google-models.js';
 import { fetchVertexHttp2, forwardVertexResponse, getVertexHttp2Proxy } from '../../vertex-http2.js';
 import { validateNativePdfRequest, assertNativePdfReferences } from '../../../public/scripts/native-pdf.js';
-import { GEMINI_3_8_FLASH, getVertexGeminiLocation, isGemini4Model, limitGeminiOutputTokens } from '../../../public/scripts/gemini-models.js';
+import { GEMINI_3_8_FLASH, VERTEX_FLEX_MAX_BYTES, VERTEX_FLEX_SIZE_ERROR, applyGoogleFlexTier, getGoogleFlexError, getVertexGeminiLocation, isGemini4Model, limitGeminiOutputTokens } from '../../../public/scripts/gemini-models.js';
 import { resolveNativePdfs } from '../../native-pdf.js';
 
 const API_OPENAI = 'https://api.openai.com/v1';
@@ -458,6 +458,14 @@ async function sendClaudeRequest(request, response) {
 async function sendMakerSuiteRequest(request, response) {
     const useVertexAi = request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.VERTEXAI;
     const apiName = useVertexAi ? 'Google Vertex AI' : 'Google AI Studio';
+    const model = String(request.body.model);
+    const { region, host, isMultiRegion, regionError } = getVertexGeminiLocation(model, request.body.vertexai_region);
+    const useFlex = request.body.google_use_flex === true;
+    const flexError = useFlex && getGoogleFlexError(model, useVertexAi, region);
+    if (flexError) {
+        return response.status(400).send({ error: true, message: flexError });
+    }
+
     let apiUrl;
     let apiKey;
 
@@ -489,9 +497,7 @@ async function sendMakerSuiteRequest(request, response) {
         authType = 'api_key';
     }
 
-    const model = String(request.body.model);
     const stream = Boolean(request.body.stream);
-    const { region, host, isMultiRegion, regionError } = getVertexGeminiLocation(model, request.body.vertexai_region);
     if (useVertexAi && authType !== 'proxy' && regionError) {
         return response.status(400).send({ error: true, message: regionError });
     }
@@ -756,8 +762,13 @@ async function sendMakerSuiteRequest(request, response) {
             url = `${apiUrl.toString().replace(/\/$/, '')}/${apiVersion}/models/${model}:${responseType}?key=${apiKey}${stream ? '&alt=sse' : ''}`;
         }
 
+        if (useFlex) applyGoogleFlexTier(body, headers, useVertexAi);
+        const serializedBody = JSON.stringify(body);
+        if (useFlex && useVertexAi && Buffer.byteLength(serializedBody) > VERTEX_FLEX_MAX_BYTES) {
+            return response.status(400).send({ error: true, message: VERTEX_FLEX_SIZE_ERROR });
+        }
         const fetchOptions = {
-            body: JSON.stringify(body),
+            body: serializedBody,
             method: 'POST',
             headers: headers,
             signal: controller.signal,
@@ -797,8 +808,9 @@ async function sendMakerSuiteRequest(request, response) {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn(`${apiName} API returned error: ${generateResponse.status} ${generateResponse.statusText}`, nativeVertex ? '' : errorText);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                const status = useFlex && [429, 503].includes(generateResponse.status) ? generateResponse.status : 500;
+                const errorJson = tryParse(errorText) ?? (status === 500 ? { error: true } : { error: true, message: 'Flex capacity is unavailable. Try again later.' });
+                return response.status(status).send(errorJson);
             }
 
             /** @type {any} */

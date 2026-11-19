@@ -1,4 +1,12 @@
 {
+    "Flex inference": "Flex 弹性推理",
+    "Lower cost, longer waits. Busy requests may be rejected.": "费用较低，等待较长。容量紧张时请求可能被拒绝。",
+    "Turn off Flex to use standard pricing.": "关闭 Flex 即可按标准价格发送。",
+    "Flex is unavailable for this model on Vertex AI.": "Vertex AI 的此模型不支持 Flex。",
+    "Flex is unavailable for this model on Google AI Studio.": "Google AI Studio 的此模型不支持 Flex。",
+    "Vertex AI Flex requires the global region.": "Vertex AI 的 Flex 仅在 global 区域可用。",
+    "Vertex AI Flex accepts up to 20 MB for the entire request. Reduce the prompt or attachments.": "Vertex AI 的 Flex 单次请求上限为 20 MB。请缩短提示词或减少附件。",
+    "Flex capacity is unavailable. Try again later.": "Flex 暂无可用容量，请稍后再试。",
     "SillyTavern accepts original PDFs up to 50 MB each. Compress or split the file yourself, or use Extract text. Files are not split automatically.": "酒馆的 PDF 原文件上限为每份 50 MB。请自行压缩或拆分，也可选择“提取文本”；系统不会自动拆分文件。",
     "Original PDFs require native Vertex AI with Gemini 4 Argon, Carbon, Hydrogen, or Neon. Select Extract text for other connections.": "发送 PDF 原文件需要通过原生 Vertex AI 连接 Gemini 4 Argon、Carbon、Hydrogen 或 Neon。使用其他连接时请选择“提取文本”。",
     "Send original PDFs via native Vertex AI with Gemini 4. The limit is ${0} MB per file. Each request accepts up to ${1} files, ${2} pages, and ${3} MB total. Estimated ${4} tokens per page.": "通过原生 Vertex AI 将 PDF 原文件发送给 Gemini 4。每个文件最多 ${0} MB，每次请求最多 ${1} 个文件、${2} 页，总大小不超过 ${3} MB。每页估算 ${4} 个 token。",
