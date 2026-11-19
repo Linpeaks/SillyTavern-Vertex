@@ -23,7 +23,8 @@ const source = fs.readFileSync(new URL('../src/endpoints/backends/chat-completio
 const handlerSource = source.match(/^async function sendMakerSuiteRequest\([^]*?^}/m)?.[0];
 if (!handlerSource) throw new Error('Google request handler not found');
 
-const gemini4Models = ['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen'];
+const xhighModels = ['gemini-4-hydrogen', 'gemini-4-neon'];
+const gemini4Models = ['gemini-4-argon', 'gemini-4-carbon', ...xhighModels];
 
 async function makeRequest(sourceName, effort, includeThoughts, overrides = {}, result = null, expectedStatus = 200) {
     const fetchMock = jest.fn(async () => new Response(JSON.stringify(result ?? {
@@ -102,7 +103,7 @@ describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', s
             ['auto', undefined], ['min', 'LOW'], ['low', 'LOW'],
             ['medium', 'MEDIUM'], ['high', 'HIGH'], ['max', 'HIGH'],
         ])('sends the effective %s level with either thoughts setting', async (effort, level) => {
-            const expectedLevel = model === 'gemini-4-hydrogen' && effort === 'max' ? 'XHIGH' : level;
+            const expectedLevel = xhighModels.includes(model) && effort === 'max' ? 'XHIGH' : level;
             for (const includeThoughts of [false, true]) {
                 const { body } = await makeRequest(sourceName, effort, includeThoughts, { model });
                 expect(body.generationConfig.thinkingConfig).toEqual({
@@ -114,7 +115,7 @@ describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', s
     });
 
     test.each([
-        ['gemini-4-argon', 32_768], ['gemini-4-carbon', 32_768], ['gemini-4-hydrogen', 65_536],
+        ['gemini-4-argon', 32_768], ['gemini-4-carbon', 32_768], ['gemini-4-hydrogen', 65_536], ['gemini-4-neon', 65_536],
     ])('%s honors the streaming and direct REST output limits and omits fixed sampling parameters', async (model, nonStreamingCap) => {
         for (const stream of [false, true]) {
             const { body, url } = await makeRequest(sourceName, 'max', false, {
@@ -122,7 +123,7 @@ describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', s
                 temperature: 0.3, top_p: 0.7, top_k: 12, frequency_penalty: 0.8, presence_penalty: 0.4, n: 2,
             });
             expect(body.generationConfig.maxOutputTokens).toBe(stream ? 65_536 : nonStreamingCap);
-            expect(body.generationConfig.thinkingConfig).toEqual({ includeThoughts: false, thinkingLevel: model === 'gemini-4-hydrogen' ? 'XHIGH' : 'HIGH' });
+            expect(body.generationConfig.thinkingConfig).toEqual({ includeThoughts: false, thinkingLevel: xhighModels.includes(model) ? 'XHIGH' : 'HIGH' });
             for (const parameter of ['temperature', 'topP', 'topK', 'candidateCount', 'frequencyPenalty', 'presencePenalty']) {
                 expect(body.generationConfig).not.toHaveProperty(parameter);
             }
@@ -135,8 +136,8 @@ describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', s
         }
     });
 
-    test('keeps the requested lower output budget', async () => {
-        const { body } = await makeRequest(sourceName, 'max', true, { model: 'gemini-4-hydrogen', max_tokens: 4096 });
+    test.each(xhighModels)('%s keeps the requested lower output budget', async model => {
+        const { body } = await makeRequest(sourceName, 'max', true, { model, max_tokens: 4096 });
         expect(body.generationConfig.maxOutputTokens).toBe(4096);
     });
 
@@ -170,7 +171,7 @@ describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', s
         }
     });
 
-    test('Hydrogen replays signed model text and a signed parallel tool turn', async () => {
+    test.each(xhighModels)('%s replays signed model text and a signed parallel tool turn', async model => {
         const args = { body: '第一段\n\n第二段 "保留引号"' };
         const calls = [
             { id: 'local-first', signature: 'first-tool-signature', function: { name: 'emit_story', arguments: JSON.stringify(args) } },
@@ -185,7 +186,7 @@ describe.each(['vertexai', 'makersuite'])('%s Google request thinking config', s
             { role: 'tool', tool_call_id: 'local-first', content: 'story received' },
             { role: 'tool', tool_call_id: 'local-second', content: 'title received' },
         ];
-        const { body } = await makeRequest(sourceName, 'max', true, { model: 'gemini-4-hydrogen', messages });
+        const { body } = await makeRequest(sourceName, 'max', true, { model, messages });
         expect(body.contents[1]).toEqual({ role: 'model', parts: [
             { text: 'past answer', thoughtSignature: 'past-text-signature' },
             { text: 'continued answer', thoughtSignature: 'continued-text-signature' },
@@ -230,7 +231,7 @@ describe.each(gemini4Models)('%s Vertex routing', model => {
     });
 });
 
-test.each(['gemini-4-carbon', 'gemini-4-hydrogen'])('%s rejects unsupported Vertex regions before any upstream request', async model => {
+test.each(['gemini-4-carbon', ...xhighModels])('%s rejects unsupported Vertex regions before any upstream request', async model => {
     const { response } = await makeRequest('vertexai', 'low', false, { model, vertexai_region: 'us-central1' }, null, 400);
     expect(response.value.message).toMatch(/global, us, or eu/);
 });
@@ -242,6 +243,7 @@ test('Argon retains its regional Vertex connection', async () => {
 
 test.each([
     ['gemini-4-hydrogen', 'eu', 'aiplatform.eu.rep.googleapis.com'],
+    ['gemini-4-neon', 'us', 'aiplatform.us.rep.googleapis.com'],
     ['gemini-3.8-flash', 'asia-northeast1', 'asia-northeast1-aiplatform.googleapis.com'],
     ['gemini-2.5-flash', 'us-central1', 'aiplatform.googleapis.com'],
 ])('routes %s with a project-scoped Vertex API key', async (model, region, host) => {

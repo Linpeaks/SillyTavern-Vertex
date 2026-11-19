@@ -117,7 +117,8 @@ test('rejects unsupported models/providers/proxies and lost or duplicated refere
     const messages = [{ role: 'user', content: marker }];
     for (const change of [
         { model: 'gemini-unknown' }, { model: 'gemini-3.8-flash' }, { chat_completion_source: 'openai' },
-        { chat_completion_source: 'makersuite', model: 'gemini-4-hydrogen' }, { reverse_proxy: 'https://example.com' },
+        { chat_completion_source: 'makersuite', model: 'gemini-4-hydrogen' },
+        { chat_completion_source: 'makersuite', model: 'gemini-4-neon' }, { reverse_proxy: 'https://example.com' },
     ]) {
         expect(() => validateNativePdfRequest({ ...request(messages), ...change })).toThrow(/require/);
     }

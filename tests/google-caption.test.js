@@ -68,7 +68,7 @@ function requestCaption(overrides) {
     });
 }
 
-describe.each(['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen'])('%s Vertex captions', model => {
+describe.each(['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen', 'gemini-4-neon'])('%s Vertex captions', model => {
     test.each([
         ['global', 'aiplatform.googleapis.com'],
         ['us', 'aiplatform.us.rep.googleapis.com'],
@@ -108,16 +108,16 @@ test('keeps the proxy route and credentials independent of the native region che
     expect(readSecret).not.toHaveBeenCalled();
 });
 
-test('keeps the no-caption error when AI Studio returns only thoughts and image data', async () => {
+test.each(['gemini-4-hydrogen', 'gemini-4-neon'])('%s preserves the no-caption error when AI Studio returns only thoughts and image data', async model => {
     upstreamFetch.mockResolvedValueOnce(new Response(JSON.stringify({
         candidates: [{ content: { parts: [parts[0], parts[2]] } }],
     })));
-    const response = await requestCaption({ api: 'google' });
+    const response = await requestCaption({ api: 'google', model });
     expect(response.status).toBe(500);
     expect(await response.text()).toBe('No caption found');
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
     expect(upstreamFetch).toHaveBeenCalledWith(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent',
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
         expect.objectContaining({ headers: expect.objectContaining({ 'x-goog-api-key': 'synthetic-studio-key' }) }),
     );
 });

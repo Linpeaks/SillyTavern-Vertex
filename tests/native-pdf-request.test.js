@@ -32,7 +32,11 @@ const logs = [];
 const toolReply = { candidates: [{ content: { parts: [{ functionCall: { name: 'emit', args: { body: 'synthetic tool response' } } }] }, finishReason: 'STOP' }] };
 const story = '第一段🧪\n\n第二段 "保留引号"';
 const signature = 'synthetic-tool-signature';
-const hydrogenProviderId = 'synthetic-hydrogen-provider-id';
+const signedToolModels = [
+    ['gemini-4-carbon', 'HIGH', undefined],
+    ['gemini-4-hydrogen', 'XHIGH', 'synthetic-hydrogen-provider-id'],
+    ['gemini-4-neon', 'XHIGH', 'synthetic-neon-provider-id'],
+];
 
 async function* streamedToolEvents(providerId) {
     const frames = [
@@ -69,8 +73,8 @@ beforeAll(async () => {
         getVertexHttp2Proxy: async () => '',
         fetchVertexHttp2: async (url, init) => {
             calls.push({ url, body: JSON.parse(init.body), signal: init.signal });
-            const providerId = url.includes('gemini-4-hydrogen:') ? hydrogenProviderId : undefined;
-            const events = /gemini-4-(carbon|hydrogen):/.test(url) ? streamedToolEvents(providerId) : ['data: ' + JSON.stringify(toolReply) + '\n\n'];
+            const matchedModel = signedToolModels.find(([model]) => url.includes(`/models/${model}:`));
+            const events = matchedModel ? streamedToolEvents(matchedModel[2]) : ['data: ' + JSON.stringify(toolReply) + '\n\n'];
             return new Response(Readable.from(events), { headers: { 'content-type': 'text/event-stream' } });
         },
     });
@@ -114,9 +118,7 @@ test('real upload and generate routes preserve PDF bytes, merge_tools and tool-o
     expect(JSON.stringify(logs)).not.toContain(bytes.toString('base64'));
 });
 
-test.each([
-    ['gemini-4-carbon', 'HIGH', undefined], ['gemini-4-hydrogen', 'XHIGH', hydrogenProviderId],
-])('%s round-trips a PDF, image and complete signed streamed tool call', async (model, thinkingLevel, providerId) => {
+test.each(signedToolModels)('%s round-trips a PDF, image and complete signed streamed tool call', async (model, thinkingLevel, providerId) => {
     const bytes = makePdf(`synthetic ${model} document`);
     const upload = await fetch(url + '/upload-pdf', { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: bytes });
     expect(upload.status).toBe(200);

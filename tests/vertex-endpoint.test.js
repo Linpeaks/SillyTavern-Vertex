@@ -104,6 +104,7 @@ function client(url, { stream = true, signal, sourceName = 'vertexai', model = '
 
 test.each([
     ['gemini-4-argon', 'high', 'HIGH'], ['gemini-4-carbon', 'high', 'HIGH'], ['gemini-4-hydrogen', 'max', 'XHIGH'],
+    ['gemini-4-neon', 'max', 'XHIGH'],
 ])('%s client -> production handler -> TLS HTTP/2 -> delayed tool-only SSE is complete', async (model, effort, thinkingLevel) => {
     const data = 'data: ' + JSON.stringify({ candidates: [{ content: { parts: [{
         functionCall: { name: 'emit_story', args: { body: 'synthetic-private-tool-body' } },

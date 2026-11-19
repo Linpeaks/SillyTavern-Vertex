@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getConfigValue, tryParse } from './util.js';
-import { GEMINI_3_8_FLASH, GEMINI_4_HYDROGEN, isGemini4Model } from '../public/scripts/gemini-models.js';
+import { GEMINI_3_8_FLASH, GEMINI_4_HYDROGEN, GEMINI_4_NEON, isGemini4Model } from '../public/scripts/gemini-models.js';
 
 const PROMPT_PLACEHOLDER = getConfigValue('promptPlaceholder', 'Let\'s get started.');
 
@@ -1199,7 +1199,7 @@ export function calculateGoogleBudgetTokens(maxTokens, reasoningEffort, model) {
             case REASONING_EFFORT.high:
                 return 'HIGH';
             case REASONING_EFFORT.max:
-                return model === GEMINI_4_HYDROGEN ? 'XHIGH' : 'HIGH';
+                return model === GEMINI_4_HYDROGEN || model === GEMINI_4_NEON ? 'XHIGH' : 'HIGH';
             default:
                 return null;
         }

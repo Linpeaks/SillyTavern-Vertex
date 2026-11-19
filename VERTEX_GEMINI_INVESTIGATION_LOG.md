@@ -723,6 +723,12 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 采用同一 npm 注册表的生产审计，critical 从 2 降至 0，总计从 54 降至 52（40 high、12 moderate）。包含开发依赖时 critical 同为 0。隔离的 Windows 实例通过 HTTP 管理入口从合成仓库安装扩展、查询版本、列出与切换分支、识别可用更新并快进；插件 CLI 也完成安装和快进。验证使用全新数据和测试仓库。Windows 启动器检查、JS 语法、ESLint、Termux 的 14 项管理测试均通过。
 - 完整 Jest 31 套件、655 项全部通过（76.5 秒），含 65 秒的本地 HTTP/2 慢测。未调用 Google 生成或改动已安装的第三方扩展。
 
+## 019A · 2026-11-19（Asia/Shanghai）· 内置 Gemini 4 Neon
+
+- 用户要求调查 Neon 与 Flex 并提供支持。起点为 `codex/image-preset-attachments` / `5d06058dd`。已核对 [Google 发布公告](https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-neon/)、[AI Studio 型号页](https://aistudio.google.com/docs/models/gemini-4-neon) 与 [Vertex 型号页](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-neon?hl=en)。公开 ID 为 `gemini-4-neon`，11 月 18 日发布。部分地区的 Vertex 访问需要经过验证的企业客户资格。
+- AI Studio 与 Vertex 的聊天、图片描述菜单均内置 Neon。三个 Vertex 位置为 `global`、`us`、`eu`。Neon 的输入与输出合用 1,048,576 token；酒馆单次流式或非流式请求最多输出 65,536 token。Auto 使用模型默认 HIGH；Maximum 发送 XHIGH。沿用现有图像、音视频、完整工具调用、签名，以及原生 Vertex 的 PDF 入口和本地预算。保留已有默认模型。
+- 定向验证覆盖两种来源的思考与上下文、三个 Vertex 位置、合成图片和原始 PDF、流式工具正文、调用 ID 及后续回传。四个内置模型入口中 Neon 各出现一次。未用真实账号生成。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

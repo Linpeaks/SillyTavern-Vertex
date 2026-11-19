@@ -56,7 +56,7 @@ test('native references retain filename and coexist with unchanged text attachme
     expect(await f.context.appendFileContent(message, 'question')).not.toContain('ST_NATIVE_PDF');
 });
 
-for (const model of ['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen']) test(`${model} native upload keeps only metadata in chat and resets mode via the form`, async () => {
+for (const model of ['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen', 'gemini-4-neon']) test(`${model} native upload keeps only metadata in chat and resets mode via the form`, async () => {
     const f = fixture(model);
     const message = { is_user: true, extra: {} };
     await f.context.populateFileAttachment(message);

@@ -30,7 +30,7 @@ for (const sourceName of ['vertexai', 'makersuite']) test(`Argon images require 
     expect(context.isImageInliningSupported()).toBe(false);
 });
 
-const nativeMediaModels = ['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen', 'gemini-3.8-flash'];
+const nativeMediaModels = ['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen', 'gemini-4-neon', 'gemini-3.8-flash'];
 
 for (const sourceName of ['vertexai', 'makersuite']) {
     for (const model of nativeMediaModels) test(`${model} enables image, audio and video on ${sourceName} only with inline media`, () => {
