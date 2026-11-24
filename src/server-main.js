@@ -286,14 +286,15 @@ async function preSetupTasks() {
 
     // Print formatted header
     console.log();
-    console.log(`SillyTavern ${version.pkgVersion}`);
+    const label = version.edition ? `${version.edition.name} ${version.edition.version} · ` : '';
+    console.log(`${label}SillyTavern ${version.pkgVersion}`);
+    setWindowTitle(version.edition ? `${version.edition.name} ${version.edition.version}` : 'SillyTavern WebServer');
     if (version.gitBranch && version.commitDate) {
         const date = new Date(version.commitDate);
         const localDate = date.toLocaleString('en-US', { timeZoneName: 'short' });
         console.log(`Running '${version.gitBranch}' (${version.gitRevision}) - ${localDate}`);
-        if (!version.isLatest && ['staging', 'release'].includes(version.gitBranch)) {
-            console.log('INFO: Currently not on the latest commit.');
-            console.log('      Run \'git pull\' to update. If you have any merge conflicts, run \'git reset --hard\' and \'git pull\' to reset your branch.');
+        if (!version.isLatest && version.gitBranch === 'main') {
+            console.log('Local main differs from its tracking branch. Check git status before updating.');
         }
     }
     console.log();
@@ -415,8 +416,6 @@ async function postSetupTasks(result) {
         // Loop using the converted milliseconds
         setInterval(writeHeartbeat, intervalMs).unref();
     }
-
-    setWindowTitle('SillyTavern WebServer');
 
     let logListen = 'SillyTavern is listening on';
 

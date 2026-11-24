@@ -191,6 +191,9 @@ start_app() {
 show_status() {
     assert_checkout
     info "目录：$ST_DIR"
+    if command -v node >/dev/null && [[ -f "$ST_DIR/package.json" ]]; then
+        (cd -- "$ST_DIR" && node -e 'const p = require("./package.json"); if (p.personalEdition) console.log(p.personalEdition.name, p.personalEdition.version, "· SillyTavern", p.version);') || info '未能读取版号。'
+    fi
     git -C "$ST_DIR" log -1 --format='%h %cs %s'
     git -C "$ST_DIR" status --short --branch
     printf '\n备份目录：%s\n' "$ST_BACKUP_DIR"

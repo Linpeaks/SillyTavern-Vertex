@@ -101,7 +101,7 @@ st start
 
 电脑工作区：`D:\AIsoftware\SillyTavern`。
 `origin` 指向你的仓库，`upstream` 保留官方仓库并禁用推送。
-本地开发分支 `codex/termux-deployment` 跟踪 `origin/main`。
+本地日常分支 `main` 跟踪个人 `origin/main`。
 
 每次修改后更新 `VERTEX_GEMINI_INVESTIGATION_LOG.md`，验证并只暂存相关源码/文档：
 
@@ -114,8 +114,7 @@ git push origin HEAD:main
 ```
 
 然后手机运行 `st update` 和 `st start`。新增本地分支时继续明确推送到你自己的
-目标分支；不要直接把官方更新覆盖到 `main`。需要合并上游时，先 `git fetch upstream`，
-在单独分支检查差异和冲突，再合并并验证。回滚源码优先 `git revert <提交号>`，
+目标分支；不要直接把官方更新覆盖到 `main`。官方远端仅供选取修复。需要某项上游改动时，在单独分支核对差异并验证。回滚源码优先 `git revert <提交号>`，
 验证后推送，再由手机正常更新；不要用 `reset --hard` 或 `clean` 清理用户文件。
 
 ## 网络与验证范围

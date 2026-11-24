@@ -113,9 +113,13 @@
     "license": "AGPL-3.0",
     "repository": {
         "type": "git",
-        "url": "https://github.com/SillyTavern/SillyTavern.git"
+        "url": "https://github.com/Linpeaks/SillyTavern-Vertex.git"
     },
     "version": "1.19.1",
+    "personalEdition": {
+        "name": "凌峰酒馆",
+        "version": "0.1.0"
+    },
     "scripts": {
         "init": "node src/server-init.js",
         "start": "node server.js",

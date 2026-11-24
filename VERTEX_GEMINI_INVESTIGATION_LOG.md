@@ -749,6 +749,13 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 单独检查 [慢保存补丁 #5983](https://github.com/SillyTavern/SillyTavern/pull/5983)。从该提交读取真实 `saveChatConditional`，用可控制的计时器与模拟写入测试。在模拟的 60 秒超时后第二次保存写入版本 2，延迟的第一次保存随后写入版本 1，最终留下旧版本。这是合成顺序测试。该补丁暂缓，后续改动需保证晚完成的旧写入不能覆盖新消息。
 - 按既有授权将通过验证的两项改动快进发布到个人 `main` 和 Termux 更新源，随后核对远端提交及干净安装、启动检查。
 
+## 021A · 2026-11-24（Asia/Shanghai）· 凌峰酒馆个人发行与更新
+
+- 用户决定独立维护个人版本，平时更新与发布以个人 main 为准，官方改动按需选用。由与个人远端一致的 `265bcb23b` 新建本地 `main`，跟踪 `origin/main`。原开发分支及起点已有的三处未提交文档保留。
+- `package.json` 的 `personalEdition` 统一记录名称与个人版号（凌峰酒馆 0.1.0）。`version` 继续表示 SillyTavern 1.19.1 兼容基线，旧客户端及扩展继续读取原协议字段。个人仓库地址、首页及浏览器标题、服务端启动信息、Windows 启动器和 Termux 状态接入个人版标识。保留上游署名和许可证。
+- 两个 Windows 更新批处理共用 `launcher/update-personal.mjs`。只在干净的个人 main 上检查指定 origin，使用已读取的远端提交做快进，去掉原有自动切分支、rebase 和 autostash。依赖安装失败会中止启动。日常桌面启动仍独立于更新。改正 Windows 与 Termux 更新说明，个人仓库创建 Release 时跳过上游 npm 发布工作流。
+- 临时 Git 检查覆盖个人 main 快进、已是最新版、工作区有改动、错误分支、错误远端及存在未发布提交；忽略文件在快进后保留。Windows 启动器 `-Check` 与隔离服务的 `/version` 均返回个人版信息。Git Bash 实际执行 Termux 状态函数显示两个版号，14 项隔离管理测试通过。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。

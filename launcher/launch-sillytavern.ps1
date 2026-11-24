@@ -84,7 +84,8 @@ const browserPort = config.browserLaunch?.port;
 const url = new URL(probeUrl);
 if (browserHostname && browserHostname !== 'auto') url.hostname = browserHostname;
 if (Number.isInteger(browserPort) && browserPort > 0) url.port = String(browserPort);
-console.log(JSON.stringify({port, hostname: hostname.replace(/[\[\]]/g, ''), probeUrl, browserUrl: url.href}));
+const { personalEdition } = require('./package.json');
+console.log(JSON.stringify({edition: personalEdition.name + ' ' + personalEdition.version, port, hostname: hostname.replace(/[\[\]]/g, ''), probeUrl, browserUrl: url.href}));
 '@
     $settingsJson = & $node --input-type=commonjs --eval $readSettings
     if ($LASTEXITCODE -ne 0) { throw 'Could not read config.yaml. See the error above.' }
@@ -92,6 +93,7 @@ console.log(JSON.stringify({port, hostname: hostname.replace(/[\[\]]/g, ''), pro
 
     if ($Check) {
         [pscustomobject]@{
+            Edition = $settings.edition
             ProjectRoot = $projectRoot
             Node = $node
             NodeVersion = $nodeVersion
@@ -131,7 +133,7 @@ console.log(JSON.stringify({port, hostname: hostname.replace(/[\[\]]/g, ''), pro
     }
 
     $env:NODE_ENV = 'production'
-    Write-Host "[SillyTavern] Starting $projectRoot"
+    Write-Host "[$($settings.edition)] Starting $projectRoot"
     Write-Host "[SillyTavern] URL: $($settings.browserUrl)"
     Write-Host '[SillyTavern] Keep this window open. Press Ctrl+C here to stop the server.'
     $browserEnabled = if ($NoBrowser) { 'false' } else { 'true' }

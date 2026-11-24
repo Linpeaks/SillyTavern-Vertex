@@ -1,10 +1,8 @@
-# SillyTavern
+# 凌峰酒馆
 
-LLM Frontend for Power Users
+基于 SillyTavern 的个人发行版，面向 Windows 和 Android / Termux。个人主线为 `Linpeaks/SillyTavern-Vertex:main`，按自己的使用需求发布，按需选取上游修复。个人版号与 SillyTavern 基线统一记录在 [package.json](package.json)，启动时会显示两者。
 
-This is **Linpeaks' customized Vertex/Gemini edition**, based on SillyTavern
-1.19.0. The original project's resources are linked below. All existing local
-Vertex transport, Argon thinking, image and native PDF changes are preserved.
+Windows 使用 `SillyTavern.bat` 日常启动，停服后使用 `UpdateAndStart.bat` 更新。Vertex 流式传输、完整工具参数、图片和原始 PDF 均沿用个人版实现。
 
 ## Android / Termux 一键安装
 
