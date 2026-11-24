@@ -89,7 +89,7 @@ test('a new upload can be sent without resending saved images', async ({ page })
         document.querySelector('#composer_attachments').open = true;
     }, dataUrl);
     await page.locator('#file_form_input').setInputFiles({ name: 'new.png', mimeType: 'image/png', buffer: image });
-    await expect(page).toHaveTitle('凌峰酒馆');
+    await expect(page).toHaveTitle('Linpeak');
     await expect(page.locator('#composer_image_count')).toHaveText('New images: 1 · History: 1');
     const bounds = await page.locator('#composer_attachments').boundingBox();
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);

@@ -1,4 +1,4 @@
-凌峰酒馆更新
+Linpeak更新
 
 Windows：停止正在运行的酒馆，双击 UpdateAndStart.bat。旧入口 UpdateForkAndStart.bat 使用同一更新流程。
 更新检查个人 origin/main、当前分支及工作区，再快进、核对生产依赖并启动。日常启动使用 SillyTavern.bat。

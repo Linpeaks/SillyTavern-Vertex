@@ -1,4 +1,4 @@
-# 凌峰酒馆
+# Linpeak
 
 基于 SillyTavern 的个人发行版，面向 Windows 和 Android / Termux。个人主线为 `Linpeaks/SillyTavern-Vertex:main`，按自己的使用需求发布，按需选取上游修复。个人版号与 SillyTavern 基线统一记录在 [package.json](package.json)，启动时会显示两者。
 

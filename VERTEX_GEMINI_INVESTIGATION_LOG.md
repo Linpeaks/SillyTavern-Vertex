@@ -749,10 +749,10 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 单独检查 [慢保存补丁 #5983](https://github.com/SillyTavern/SillyTavern/pull/5983)。从该提交读取真实 `saveChatConditional`，用可控制的计时器与模拟写入测试。在模拟的 60 秒超时后第二次保存写入版本 2，延迟的第一次保存随后写入版本 1，最终留下旧版本。这是合成顺序测试。该补丁暂缓，后续改动需保证晚完成的旧写入不能覆盖新消息。
 - 按既有授权将通过验证的两项改动快进发布到个人 `main` 和 Termux 更新源，随后核对远端提交及干净安装、启动检查。
 
-## 021A · 2026-11-24（Asia/Shanghai）· 凌峰酒馆个人发行与更新
+## 021A · 2026-11-24（Asia/Shanghai）· Linpeak个人发行与更新
 
 - 用户决定独立维护个人版本，平时更新与发布以个人 main 为准，官方改动按需选用。由与个人远端一致的 `265bcb23b` 新建本地 `main`，跟踪 `origin/main`。原开发分支及起点已有的三处未提交文档保留。
-- `package.json` 的 `personalEdition` 统一记录名称与个人版号（凌峰酒馆 0.1.0）。`version` 继续表示 SillyTavern 1.19.1 兼容基线，旧客户端及扩展继续读取原协议字段。个人仓库地址、首页及浏览器标题、服务端启动信息、Windows 启动器和 Termux 状态接入个人版标识。保留上游署名和许可证。
+- `package.json` 的 `personalEdition` 统一记录名称与个人版号（Linpeak 0.1.0）。`version` 继续表示 SillyTavern 1.19.1 兼容基线，旧客户端及扩展继续读取原协议字段。个人仓库地址、首页及浏览器标题、服务端启动信息、Windows 启动器和 Termux 状态接入个人版标识。保留上游署名和许可证。
 - 两个 Windows 更新批处理共用 `launcher/update-personal.mjs`。只在干净的个人 main 上检查指定 origin，使用已读取的远端提交做快进，去掉原有自动切分支、rebase 和 autostash。依赖安装失败会中止启动。日常桌面启动仍独立于更新。改正 Windows 与 Termux 更新说明，个人仓库创建 Release 时跳过上游 npm 发布工作流。
 - 临时 Git 检查覆盖个人 main 快进、已是最新版、工作区有改动、错误分支、错误远端及存在未发布提交；忽略文件在快进后保留。Windows 启动器 `-Check` 与隔离服务的 `/version` 均返回个人版信息。Git Bash 实际执行 Termux 状态函数显示两个版号，14 项隔离管理测试通过。
 
@@ -775,6 +775,11 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 | Docker、Bun、Deno | `Dockerfile`、`docker/`、`.dockerignore` 及 Docker 工作流用于镜像；`start:bun`、`start:deno` 是按需运行的包脚本 | 只在放弃相应部署方式时移除。Docker 发布任务已限定官方仓库；删除镜像文件不会减少日常模型请求或上下文。 |
 | GitHub 项目管理与发布 | 11 个工作流中有 7 个用于维护 issue/PR（自动管理、合并通知、陈旧工单、开关事件、冲突检查），另有 PR 检查、Docker、npm 和 Termux 部署工作流 | 七项社区管理流程可按协作需要停用；保留个人 main 依赖的 Termux 干净安装和启动验证。npm 发布已加官方仓库条件。 |
 | 其他模型提供商和扩展 | 聊天补全共用 `public/scripts/openai.js` 和后端请求入口；扩展由 `src/endpoints/extensions.js` 按 manifest 动态发现，历史预设亦通过来源标识恢复 | 可优先隐藏闲置菜单。仅凭静态引用无法认定模块无人使用，尚未逐一验证删除后的预设、第三方扩展和迁移链。 |
+
+## 022 · 2026-11-24（Asia/Shanghai）· 个人版名称更正为 Linpeak
+
+- 用户指定个人版的公开名称为 Linpeak。已统一应用版号元数据、README、更新说明、既有项目日志和浏览器标题断言，个人版号继续使用 0.1.0。
+- Windows 启动器、Termux 状态函数、隔离实例的 /version 接口和 Chrome 标题均显示 Linpeak。已扫描当前受 Git 跟踪的文件内容与路径，并核对公开仓库名和简介。此次通过个人 main 正常快进发布。
 
 ## 附录：初始调查可复现诊断
 
