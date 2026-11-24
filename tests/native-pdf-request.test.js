@@ -153,6 +153,7 @@ test.each(signedToolModels)('%s round-trips a PDF, image and complete signed str
                 } } }],
             },
         }),
+        reviewRequestAttachments() {},
         event_types: { CHAT_COMPLETION_SETTINGS_READY: 'ready' }, eventSource: { emit: async () => {} },
         parseChatCompletionLogprobs: () => null, tryParseStreamingError: () => {},
         toastr: { info() {}, clear() {} },

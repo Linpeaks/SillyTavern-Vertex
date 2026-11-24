@@ -76,6 +76,7 @@ import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 import { renderTemplateAsync } from './templates.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
+import { reviewRequestAttachments } from './composer-attachments.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { t, translate } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
@@ -3182,6 +3183,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     if (mediaParts?.length) assertMediaParts(mediaParts, generate_data.messages, protectedMediaTypes);
     if (nativePdfRefs.length) generate_data.native_pdf_refs = nativePdfRefs.map(ref => ref.marker);
     validateNativePdfRequest(generate_data);
+    await reviewRequestAttachments(type, generate_data, nativePdfRefs, signal);
 
     const generate_url = '/api/backends/chat-completions/generate';
     const response = await fetch(generate_url, {

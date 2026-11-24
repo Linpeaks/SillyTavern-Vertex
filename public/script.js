@@ -248,6 +248,7 @@ import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_set
 import { loader } from './scripts/action-loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { initTextGenModels } from './scripts/textgen-models.js';
+import { applyTurnImageScope, takeDraftImageScope } from './scripts/composer-attachments.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros } from './scripts/macros.js';
@@ -4556,6 +4557,8 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         };
     }));
 
+    if (main_api === 'openai') coreChat = applyTurnImageScope(coreChat);
+
     const promptReasoning = new PromptReasoning();
     for (let i = coreChat.length - 1; i >= 0; i--) {
         const depth = coreChat.length - i - (isContinue ? 2 : 1);
@@ -5934,6 +5937,9 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
     }
 
     await populateFileAttachment(message);
+    if (insertAt === null && main_api === 'openai' && takeDraftImageScope()) {
+        message.extra.onlyTurnImages = true;
+    }
     statMesProcess(message, 'user', characters, this_chid, '');
 
     chat_metadata.tainted = true;

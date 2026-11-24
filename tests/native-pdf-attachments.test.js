@@ -81,7 +81,7 @@ test('150 MB original fails before reading/uploading any file and explains the s
 test('selecting an oversized PDF warns immediately without changing the attachment mode', async () => {
     const warning = jest.fn();
     const chain = { text: () => chain, attr: () => chain, toggleClass: () => chain, removeClass: () => chain };
-    const context = vm.createContext({ ...references, validateFile: async () => true, toastr: { warning },
+    const context = vm.createContext({ ...references, refreshComposerAttachments() {}, validateFile: async () => true, toastr: { warning },
         t: strings => strings[0], translate: value => value, humanFileSize: value => String(value), $: () => chain, getCurrentChatId: () => null });
     vm.runInContext(source.match(/^async function onFileAttach\([^]*?^}/m)[0], context);
     await context.onFileAttach([{ type: 'application/pdf', name: 'synthetic.pdf', size: 150_000_000 }]);

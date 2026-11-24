@@ -8117,6 +8117,18 @@
                 <div id="dialogue_del_mes_cancel" data-i18n="Cancel" class="menu_button">Cancel</div>
             </div>
             <div id="send_form" class="no-connection">
+                <details id="composer_attachments" class="displayNone">
+                    <summary data-i18n="Request attachments">Request attachments</summary>
+                    <div class="composer_attachment_body">
+                        <span id="composer_model"></span>
+                        <label class="checkbox_label"><input type="checkbox" id="composer_turn_images"><span data-i18n="Only send this user turn's images">Only send this user turn's images</span></label>
+                        <label class="checkbox_label"><input type="checkbox" id="composer_review_once"><span data-i18n="Review before the next request">Review before the next request</span></label>
+                        <span id="composer_image_count"></span>
+                        <span id="composer_pdf_list"></span>
+                        <small data-i18n="Draft estimate before context trimming.">Draft estimate before context trimming.</small>
+                        <output id="composer_last_request"></output>
+                    </div>
+                </details>
                 <form id="file_form" class="wide100p displayNone">
                     <div class="file_attached">
                         <input id="file_form_input" type="file" multiple hidden>

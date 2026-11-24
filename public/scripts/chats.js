@@ -1,5 +1,6 @@
 // Move chat functions here from script.js (eventually)
 
+import { initComposerAttachments, refreshComposerAttachments } from './composer-attachments.js';
 import { Popper, css, DOMPurify } from '../lib.js';
 import {
     addCopyToCodeBlocks,
@@ -433,6 +434,7 @@ async function onFileAttach(fileList) {
     $('#pdf_attachment_mode_label').toggleClass('displayNone', ![...fileList].some(file => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)))
         .attr('title', t`Send original PDFs via native Vertex AI with Gemini 4. The limit is ${NATIVE_PDF_LIMITS.fileBytes / 1e6} MB per file. Each request accepts up to ${NATIVE_PDF_LIMITS.files} files, ${NATIVE_PDF_LIMITS.pages} pages, and ${NATIVE_PDF_LIMITS.totalBytes / 1e6} MB total. Estimated ${NATIVE_PDF_LIMITS.estimatedTokensPerPage} tokens per page.`);
     $('#file_form').removeClass('displayNone');
+    refreshComposerAttachments();
 
     // Reset form on chat change (if not on a welcome screen)
     const currentChatId = getCurrentChatId();
@@ -2189,6 +2191,7 @@ async function onImageSwiped(messageId, element, direction) {
 }
 
 export function initChatUtilities() {
+    initComposerAttachments();
     $(document).on('click', '.mes_hide', async function () {
         const messageBlock = $(this).closest('.mes');
         const messageId = Number(messageBlock.attr('mesid'));

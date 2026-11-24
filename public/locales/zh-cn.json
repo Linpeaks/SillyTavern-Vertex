@@ -3660,5 +3660,16 @@
     "Deleting chat…": "正在删除聊天…",
     "Loading chat…": "正在加载聊天…",
     "Bulk Delete": "批量删除",
-    "Deleting ${0} character(s)…": "正在删除 ${0} 个角色…"
+    "Deleting ${0} character(s)…": "正在删除 ${0} 个角色…",
+    "Request attachments": "发送附件预览",
+    "Only send this user turn's images": "本轮只发送新消息的图片",
+    "Draft estimate before context trimming.": "预估下一条新消息，尚未裁剪上下文。",
+    "Review before the next request": "下一次发送前核对",
+    "Review this request": "核对本次请求",
+    "Original PDF": "PDF 原件",
+    "Original PDF unavailable": "当前连接不支持原件",
+    "New images: ${0} · History: ${1}": "新图 ${0} 张 · 历史图片 ${1} 张",
+    "${0} · Images: ${1} · Original PDFs: ${2}": "${0} · 图片 ${1} 张 · PDF 原件 ${2} 份",
+    "Last request: ${0}": "上次请求：${0}",
+    "Request cancelled": "已取消请求"
 }

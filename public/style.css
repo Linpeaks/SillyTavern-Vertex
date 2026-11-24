@@ -903,6 +903,28 @@ body .panelControlBar {
     backdrop-filter: blur(var(--SmartThemeBlurStrength));
 }
 
+#composer_attachments {
+    width: 100%;
+    padding: 3px 10px;
+    font-size: 0.87em;
+}
+
+#composer_attachments summary {
+    width: fit-content;
+    cursor: pointer;
+}
+
+.composer_attachment_body {
+    display: grid;
+    gap: 4px;
+    padding: 6px 0;
+    max-height: min(30vh, 14rem);
+    overflow: auto;
+    overflow-wrap: anywhere;
+}
+
+.composer_attachment_body small { opacity: 0.8; }
+
 /* #send_form.no-connection {
     background-color: var(--crimson70a) !important;
 } */

@@ -2792,5 +2792,16 @@
     "Deleting chat…": "正在刪除聊天…",
     "Loading chat…": "正在載入聊天…",
     "Bulk Delete": "批次刪除",
-    "Deleting ${0} character(s)…": "正在刪除 ${0} 個角色…"
+    "Deleting ${0} character(s)…": "正在刪除 ${0} 個角色…",
+    "Request attachments": "傳送附件預覽",
+    "Only send this user turn's images": "本輪只傳送新訊息的圖片",
+    "Draft estimate before context trimming.": "預估下一條新訊息，尚未裁剪上下文。",
+    "Review before the next request": "下次傳送前核對",
+    "Review this request": "核對本次請求",
+    "Original PDF": "PDF 原件",
+    "Original PDF unavailable": "目前連線不支援原件",
+    "New images: ${0} · History: ${1}": "新圖 ${0} 張 · 歷史圖片 ${1} 張",
+    "${0} · Images: ${1} · Original PDFs: ${2}": "${0} · 圖片 ${1} 張 · PDF 原件 ${2} 份",
+    "Last request: ${0}": "上次請求：${0}",
+    "Request cancelled": "已取消請求"
 }
