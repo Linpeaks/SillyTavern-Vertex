@@ -763,6 +763,19 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 可单次勾选“下一次发送前核对”。在预设、扩展和上下文预算处理后，从最终的浏览器请求读取模型、Google 计费档、图片总数与原始 PDF 引用，显示对应文件名。取消在提交前结束，确认后只发送一次。普通发送无需确认。
 - 隔离 Chrome 验证确认前请求数为 0，取消后为 0，确认后为 1；原件名包含尖括号时按文本展示。两轮实际上传/生成流程使用本地模拟模型，第一轮只传新图 1 张，下一轮恢复 2 张，已保存的历史图仍可用。390 像素宽视口覆盖输入面板与两轮操作。全量 Jest 32 套件、735 项通过，含本地 HTTP/2 慢测。浏览器回归覆盖新增功能、消息编辑、样式渲染、提示词过滤与工具消息删除共 16 项。未调用 Google，未在 Android 实机运行。
 
+## 021C · 2026-11-24（Asia/Shanghai）· 本地版本可退役代码清查
+
+清查以 Windows 桌面启动器、Node 浏览器版、个人 GitHub main 与 Termux 为日常路径。以下结论来自 Git 跟踪文件、启动脚本、package scripts、工作流触发条件及扩展发现代码。调查没有删除下列可选模块。
+
+| 范围 | 已核对的调用入口 | 处置建议和影响 |
+| --- | --- | --- |
+| Replit 托管 | 根目录 `.replit` 调用 `start.sh`，`replit.nix` 提供 Replit 环境；个人启动器、Termux 和部署测试均不读这两个文件 | 可优先清理两份 Replit 配置。保留通用 `start.sh`。 |
+| 公网隧道 | `Remote-Link.cmd` 单独下载和启动 cloudflared，将本机 8000 端口公开；两个日常启动入口均未调用 | 始终在本机访问时可移除这个批处理；移除会失去它提供的公网分享快捷方式。 |
+| Electron 桌面外壳 | `package.json` 的 `start:electron` 进入 `src/electron/`。该目录有自己的包、锁文件、两个启动脚本及 Electron 入口，共 5 个文件 | Windows 快捷方式使用系统浏览器，不加载 Electron。若确定只用浏览器，可连同 npm 入口一起移除。 |
+| Docker、Bun、Deno | `Dockerfile`、`docker/`、`.dockerignore` 及 Docker 工作流用于镜像；`start:bun`、`start:deno` 是按需运行的包脚本 | 只在放弃相应部署方式时移除。Docker 发布任务已限定官方仓库；删除镜像文件不会减少日常模型请求或上下文。 |
+| GitHub 项目管理与发布 | 11 个工作流中有 7 个用于维护 issue/PR（自动管理、合并通知、陈旧工单、开关事件、冲突检查），另有 PR 检查、Docker、npm 和 Termux 部署工作流 | 七项社区管理流程可按协作需要停用；保留个人 main 依赖的 Termux 干净安装和启动验证。npm 发布已加官方仓库条件。 |
+| 其他模型提供商和扩展 | 聊天补全共用 `public/scripts/openai.js` 和后端请求入口；扩展由 `src/endpoints/extensions.js` 按 manifest 动态发现，历史预设亦通过来源标识恢复 | 可优先隐藏闲置菜单。仅凭静态引用无法认定模块无人使用，尚未逐一验证删除后的预设、第三方扩展和迁移链。 |
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
