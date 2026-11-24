@@ -736,6 +736,12 @@ public/scripts/openai.js:3237 的 `filter(...).map(...)[0]` 只取同一候选�
 - 隔离 Chrome / Playwright 实测 AI Studio Neon 可选 Flex、Vertex Neon 仅可用标准档、Vertex 3.8 Flash 可在 global 使用 Flex；切到 eu 后需关闭 Flex 才能按标准价继续。图片描述独立构造一次合成 Flex 请求，刷新后模型与两个来源的选择均恢复。Jest 验证普通与流式双来源协议、429/503、一次提交、Vertex 20,000,000 与 20,000,001 字节边界。未测真实 Google 请求、账号资格、账单或手机实机。
 - 最终全量 Jest 31 套件共 727 项通过（78.5 秒，包含 65 秒 HTTP/2 慢测）。Termux 管理回归 14 项通过。改动 JS 的 ESLint、语法和 Git 差异检查通过。按项目常规快进发布至个人 main，旧有未提交说明留在本机。
 
+## 020A · 2026-11-24（Asia/Shanghai）· 合入官方 1.19.1
+
+- 用户先要求筛选近期更新，随后同意实施。核对时，本地 `codex/image-preset-attachments` 与个人 `main` 均为 `f3261dd1c`。从官方 [1.19.1](https://github.com/SillyTavern/SillyTavern/releases/tag/1.19.1) 的发布提交 `82b64a45c` 合并，保留上游提交历史。起点已有的其他日志段落、`AGENTS.md` 与启动器说明仍由原工作区保留。
+- 上游修复消息及角色卡作者备注中的样式块、CharX/BYAF 导入时的资源目录，以及用户备份和删除接口对现有账户的检查。合并影响 9 个上游文件。包清单和锁文件仅更新应用版本号，保留个人版的 `simple-git@4.1.0`。
+- 在包含本次提示词修复的最终源码上，全量 Jest 32 套件、735 项通过，耗时 78.4 秒，包含 65 秒的本地 HTTP/2 保活、Google 双来源、PDF 和附件回归。临时空数据实例返回 HTTP 200，独立 Chrome 的两项样式渲染测试通过。改动源码通过项目 ESLint，变动 JS 通过语法检查。手机与真实 Google 生成未实测。
+
 ## 附录：初始调查可复现诊断
 
 在工作区根目录，将对应 JavaScript 块通过 PowerShell 单引号 here-string 管道交给 node --input-type=module。所有凭据、项目 ID 和正文均为合成占位符。基线脚本会开启一次短暂 localhost 服务，其余模拟请求不会联网。
