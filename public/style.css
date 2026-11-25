@@ -916,6 +916,8 @@ body .panelControlBar {
 #vertex_job_bar button[hidden] { display: none; }
 #vertex_job_status { flex: 1; }
 
+#composer_attachments.background_only .composer_attachment_body > :not(#vertex_job_setting):not(.generation_retention) { display: none; }
+
 #composer_attachments {
     width: 100%;
     padding: 3px 10px;

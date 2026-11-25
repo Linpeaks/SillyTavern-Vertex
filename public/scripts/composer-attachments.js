@@ -47,8 +47,8 @@ function modelLabel(settings) {
 
 export function refreshComposerAttachments() {
     const panel = byId('composer_attachments');
-    panel.classList.toggle('displayNone', main_api !== 'openai');
-    byId('vertex_job_setting').classList.toggle('displayNone', oai_settings.chat_completion_source !== 'vertexai' || !!oai_settings.reverse_proxy);
+    panel.classList.remove('displayNone');
+    panel.classList.toggle('background_only', main_api !== 'openai');
     if (!panel.open || main_api !== 'openai') return;
     const input = byId('file_form_input');
     const draft = Array.from(input.files);

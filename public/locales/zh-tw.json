@@ -2832,5 +2832,19 @@
     "The result is not ready yet.": "任務仍在生成，結果尚未就緒。",
     "The required tool is unavailable. Open the saved reply to read its complete arguments.": "目前工具無法使用，可在儲存的回覆中查看完整參數。",
     "Submitted. Waiting for the complete reply…": "已提交，等待模型傳回完整回覆…",
-    "Waiting for submission confirmation…": "等待服務確認是否收到本次請求…"
+    "Waiting for submission confirmation…": "等待服務確認是否收到本次請求…",
+    "Attachments and background generation": "附件與背景生成",
+    "Receive replies in the background": "背景接收回覆（一般傳送、重新生成）",
+    "Generation can run for 1 hour. After completion, the server keeps a temporary copy for up to 1 more hour. Saved chat messages stay in the chat.": "單次生成最多執行 1 小時。完成後臨時副本最多再保留 1 小時，已儲存的聊天訊息會保留。",
+    "Temporary copy until ${0}": "臨時副本保留至 ${0}",
+    "Finish or stop the pending generation first.": "請先接回或停止上一項生成任務。",
+    "Tool results saved. Continue with your selected connection when ready.": "原工具結果已儲存。需要後續回覆時，可使用目前連線繼續。",
+    "Open the original chat to receive this reply.": "開啟原聊天即可接回回覆，或查看原始結果。",
+    "Generation task returned HTTP ${0}.": "生成任務傳回 HTTP ${0}。",
+    "Stopping the generation…": "正在停止生成…",
+    "Generation failed.": "生成失敗。",
+    "The provider returned an incomplete reply.": "供應商傳回的回覆不完整。",
+    "The provider disconnected or exceeded the recovery limit.": "上游連線中斷，或回覆超過背景接收上限。",
+    "A generation task is already pending.": "已有一項生成任務等待處理。",
+    "Submitting the generation…": "正在提交生成請求…"
 }

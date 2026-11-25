@@ -1,12 +1,22 @@
 import { test, expect } from '@playwright/test';
 import { testSetup } from './frontent-test-utils.js';
 
-test('Carbon task reconnects after reload and executes the complete tool call once', async ({ page, context }) => {
+for (const switched of [false, true]) {
+    test(`Carbon task reconnects after reload and executes its tool once (connection switched: ${switched})`, async ({ page, context }) => {
+        const invocations = await checkVertexRecovery(page, context, switched);
+        expect(invocations).toHaveLength(1);
+    });
+}
+
+async function checkVertexRecovery(page, context, switched) {
     test.setTimeout(90000);
     await context.route('**/api/settings/get', async route => {
         const res = await route.fetch();
         const data = await res.json();
-        data.settings = JSON.stringify({ ...JSON.parse(data.settings), firstRun: false });
+        const settings = JSON.parse(data.settings);
+        data.settings = JSON.stringify({ ...settings, firstRun: false, main_api: 'openai',
+            oai_settings: { ...settings.oai_settings, chat_completion_source: 'vertexai', vertexai_model: 'gemini-4-carbon',
+                vertexai_region: 'global', vertexai_auth_mode: 'express', reverse_proxy: '', stream_openai: true, function_calling: true } });
         await route.fulfill({ response: res, json: data });
     });
     const jobs = new Map();
@@ -15,9 +25,9 @@ test('Carbon task reconnects after reload and executes the complete tool call on
     let loseStartAck = true;
     let interruptedRead = false;
     let waitingPolls = 0;
-    await context.route('**/api/backends/chat-completions/vertex-jobs**', async route => {
+    await context.route('**/api/backends/chat-completions/generation-jobs**', async route => {
         const request = route.request();
-        const [id, action] = new URL(request.url()).pathname.split('/vertex-jobs').pop().split('/').slice(1);
+        const [id, action] = new URL(request.url()).pathname.split('/generation-jobs').pop().split('/').slice(1);
         if (!id) {
             const key = String(jobs.size + 1);
             jobs.set(key, { state: 'reserved' });
@@ -58,6 +68,7 @@ test('Carbon task reconnects after reload and executes the complete tool call on
             const core = await import('./script.js');
             const { oai_settings } = await import('./scripts/openai.js');
             const { ToolManager } = await import('./scripts/tool-calling.js');
+            document.querySelector('#main_api').value = 'openai';
             core.changeMainAPI('openai');
             Object.assign(oai_settings, { chat_completion_source: 'vertexai', vertexai_model: 'gemini-4-carbon', vertexai_region: 'global',
                 vertexai_auth_mode: 'express', reverse_proxy: '', stream_openai: true, function_calling: true, vertexai_flex: false });
@@ -92,6 +103,10 @@ test('Carbon task reconnects after reload and executes the complete tool call on
         }, saved);
     }
     await testSetup.awaitST({ page });
+    await page.waitForFunction(async () => {
+        const { eventSource, event_types } = await import('./scripts/events.js');
+        return eventSource.autoFireLastArgs.has(event_types.APP_READY);
+    });
     const identity = await setup(null);
     await page.locator('#send_textarea').fill('Use the test tool');
     await page.evaluate(async () => {
@@ -108,16 +123,39 @@ test('Carbon task reconnects after reload and executes the complete tool call on
         return eventSource.autoFireLastArgs.has(event_types.APP_READY);
     });
     await setup(identity);
+    if (switched) {
+        await page.evaluate(async () => {
+            const { oai_settings } = await import('./scripts/openai.js');
+            oai_settings.vertexai_model = 'gemini-4-neon';
+            oai_settings.chat_completion_source = 'custom';
+            document.querySelector('#main_api').value = 'novel';
+            (await import('./script.js')).changeMainAPI('novel');
+        });
+    }
     ready = true;
     await expect.poll(() => page.evaluate(() => JSON.parse(sessionStorage.getItem('test-story-calls') || '[]')), { timeout: 30000 }).toEqual(['完整正文']);
-    await expect.poll(() => page.evaluate(async () => (await import('./script.js')).chat.at(-1)?.mes), { timeout: 30000 }).toBe('Synthetic follow-up finished');
-    expect(submissions).toHaveLength(2); // Original request and the distinct post-tool follow-up.
+    if (!switched) {
+        await expect.poll(() => page.evaluate(async () => {
+            const core = await import('./script.js');
+            const { isOriginalConnection } = await import('./scripts/vertex-jobs.js');
+            const job = JSON.parse(localStorage.getItem('linpeak.vertex.job.default-user'));
+            return { followup: core.chat.at(-1)?.mes === 'Synthetic follow-up finished', api: core.getGeneratingApi(),
+                model: core.getGeneratingModel(), connectionMatches: isOriginalConnection(job), online: core.online_status, phase: job?.phase };
+        }), { timeout: 20000 }).toMatchObject({ followup: true, api: 'vertexai', model: 'gemini-4-carbon' });
+    } else {
+        await expect.poll(() => page.evaluate(async () => {
+            const core = await import('./script.js');
+            const msg = core.chat.findLast(m => m.extra?.tool_invocations?.length);
+            return [core.main_api, msg?.extra.api, msg?.extra.model, core.is_send_press];
+        })).toEqual(['novel', 'vertexai', 'gemini-4-carbon', false]);
+    }
+    expect(submissions).toHaveLength(switched ? 1 : 2);
     expect(interruptedRead).toBe(true);
     const invocations = await page.evaluate(async () => (await import('./script.js')).chat.flatMap(m => m.extra?.tool_invocations || []));
-    expect(invocations).toHaveLength(1);
     expect(invocations[0]).toMatchObject({ name: 'save_test_story', googleCallId: 'saved-call', signature: 'saved-signature' });
     expect(JSON.parse(invocations[0].parameters)).toEqual({ body: '完整正文' });
-});
+    return invocations;
+}
 
 test('mobile default draws 30 of 120 messages and can load the whole history', async ({ browser }) => {
     const counts = [];
@@ -161,9 +199,9 @@ test('offline Stop is delivered when the connection returns without resubmitting
     let starts = 0;
     let deletes = 0;
     let offline = true;
-    await page.route('**/api/backends/chat-completions/vertex-jobs**', async route => {
+    await page.route('**/api/backends/chat-completions/generation-jobs**', async route => {
         const req = route.request();
-        if (req.url().endsWith('/vertex-jobs')) return route.fulfill({ status: 201, json: { id: 'stop-test' } });
+        if (req.url().endsWith('/generation-jobs')) return route.fulfill({ status: 201, json: { id: 'stop-test' } });
         if (req.url().endsWith('/start')) { starts++; return route.fulfill({ status: 202 }); }
         if (req.method() === 'DELETE') {
             if (offline) return route.abort('internetdisconnected');
@@ -204,9 +242,9 @@ test('missing tool keeps complete arguments available without claiming or execut
         await route.fulfill({ response, json: data });
     });
     let claims = 0;
-    await page.route('**/api/backends/chat-completions/vertex-jobs**', route => {
+    await page.route('**/api/backends/chat-completions/generation-jobs**', route => {
         const req = route.request();
-        if (req.url().endsWith('/vertex-jobs')) return route.fulfill({ status: 201, json: { id: 'missing-tool' } });
+        if (req.url().endsWith('/generation-jobs')) return route.fulfill({ status: 201, json: { id: 'missing-tool' } });
         if (req.url().endsWith('/start')) return route.fulfill({ status: 202 });
         if (req.url().endsWith('/claim')) { claims++; return route.fulfill({ status: 204 }); }
         if (req.url().endsWith('/result')) return route.fulfill({ json: { choices: [{ message: { content: '' } }],

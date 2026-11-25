@@ -137,6 +137,7 @@ import {
     horde_settings,
     loadHordeSettings,
     generateHorde,
+    createHordeTextPayload,
     getStatusHorde,
     getHordeModels,
     adjustHordeGenerationParams,
@@ -248,7 +249,7 @@ import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_set
 import { loader } from './scripts/action-loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { initTextGenModels } from './scripts/textgen-models.js';
-import { vertexChatAnchor, hasOriginalRegeneratedReply, backgroundVertexEnabled, hasPendingVertexJob, initVertexJobs, cancelVertexJob, finishVertexDelivery } from './scripts/vertex-jobs.js';
+import { vertexChatAnchor, hasOriginalRegeneratedReply, backgroundGenerationEnabled, captureGenerationOrigin, generationOrigin, generationStreamDetails, isOriginalConnection, runVertexJob, hasPendingVertexJob, initVertexJobs, cancelVertexJob, finishVertexDelivery } from './scripts/vertex-jobs.js';
 import { applyTurnImageScope, takeDraftImageScope } from './scripts/composer-attachments.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
@@ -749,7 +750,7 @@ async function firstLoadInit() {
         is_send_press = true;
         try {
             await generationResultHandler({ type: job.type, originalType: job.type, continue_mag: '', followup: { depth: job.depth + 1, force_name2: job.force_name2 },
-                canPerformToolCalls: job.canPerformToolCalls && ToolManager.canPerformToolCalls(job.type) })(data);
+                canPerformToolCalls: job.canPerformToolCalls })(data);
         } finally {
             unblockGeneration(job.type);
         }
@@ -4354,8 +4355,8 @@ function removeLastMessage() {
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
 export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
-    if (!dryRun && type !== 'quiet' && main_api === 'openai' && oai_settings.chat_completion_source === 'vertexai' && hasPendingVertexJob()) {
-        toastr.info(t`Finish or stop the pending Vertex task first.`);
+    if (!dryRun && type !== 'quiet' && hasPendingVertexJob()) {
+        toastr.info(t`Finish or stop the pending generation first.`);
         return;
     }
     console.log('Generate entered');
@@ -5460,9 +5461,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         console.debug(`pushed prompt bits to itemizedPrompts array. Length is now: ${itemizedPrompts.length}`);
 
-        if (!jsonSchema && backgroundVertexEnabled(type)) {
+        if (!jsonSchema && backgroundGenerationEnabled(type)) {
             const replaced = type === 'regenerate' && lastMessage && !lastMessage.is_user ? vertexChatAnchor(chat.length + 1, lastMessage) : undefined;
-            return sendGenerationRequest(type, generate_data, { background: { type: type || 'normal', canPerformToolCalls, depth, force_name2, replaced } });
+            return sendGenerationRequest(type, generate_data, { background: { ...captureGenerationOrigin(), type: type || 'normal', canPerformToolCalls, depth, force_name2, replaced } });
         }
         if (isStreamingEnabled() && type !== 'quiet') {
             continue_mag = promptReasoning.removePrefix(continue_mag);
@@ -5586,14 +5587,18 @@ function generationResultHandler({ type, originalType, isImpersonate, isContinue
         }
 
         //const getData = await response.json();
-        let getMessage = extractMessageFromData(data);
-        let title = extractTitleFromData(data);
-        let reasoning = extractReasoningFromData(data);
-        let imageUrls = extractImagesFromData(data);
-        const reasoningSignature = extractReasoningSignatureFromData(data);
-        kobold_horde_model = title;
+        const origin = generationOrigin(data);
+        const stream = generationStreamDetails(data);
+        const format = { mainApi: origin?.mainApi, chatCompletionSource: origin?.source, textGenType: origin?.textGenType };
+        let getMessage = extractMessageFromData(data, origin?.mainApi);
+        const title = extractTitleFromData(data, origin?.mainApi);
+        let reasoning = stream?.reasoning ?? (origin?.showThoughts === false && origin.mainApi === 'openai' ? ''
+            : extractReasoningFromData(data, { ...format, ignoreShowThoughts: !!origin }));
+        let imageUrls = stream?.images ?? extractImagesFromData(data, format);
+        const reasoningSignature = stream?.signature || extractReasoningSignatureFromData(data, format);
+        if (!origin || main_api === 'koboldhorde') kobold_horde_model = title;
 
-        const swipes = extractMultiSwipes(data, type);
+        const swipes = extractMultiSwipes(data, type, format);
 
         messageChunk = cleanUpMessage({
             getMessage: getMessage,
@@ -5632,13 +5637,13 @@ function generationResultHandler({ type, originalType, isImpersonate, isContinue
         } else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, origin }));
             } else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, reasoningSignature, origin }));
             }
 
             // This relies on `saveReply` having been called to add the message to the chat, so it must be last.
-            parseAndSaveLogprobs(data, continue_mag);
+            if (isOriginalConnection(origin)) parseAndSaveLogprobs(data, continue_mag);
         }
 
         if (canPerformToolCalls) {
@@ -5657,9 +5662,12 @@ function generationResultHandler({ type, originalType, isImpersonate, isContinue
                     return;
                 }
 
-                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations);
+                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, origin);
                 finishVertexDelivery(data);
-                return Generate('normal', followup);
+                if (isOriginalConnection(origin)) return Generate('normal', followup);
+                unblockGeneration(type);
+                toastr.info(t`Tool results saved. Continue with your selected connection when ready.`);
+                return;
             }
         }
 
@@ -5668,7 +5676,7 @@ function generationResultHandler({ type, originalType, isImpersonate, isContinue
         }
 
         const isAborted = abortController && abortController.signal.aborted;
-        if (!isAborted && power_user.auto_swipe && generatedTextFiltered(getMessage)) {
+        if (isOriginalConnection(origin) && !isAborted && power_user.auto_swipe && generatedTextFiltered(getMessage)) {
             is_send_press = false;
             finishVertexDelivery(data);
             return await swipe(null, SWIPE_DIRECTION.RIGHT, { source: SWIPE_SOURCE.AUTO_SWIPE, repeated: true, forceMesId: chat.length - 1 });
@@ -5680,7 +5688,7 @@ function generationResultHandler({ type, originalType, isImpersonate, isContinue
         unblockGeneration(type);
         streamingProcessor = null;
 
-        if (type !== 'quiet') {
+        if (type !== 'quiet' && isOriginalConnection(origin)) {
             triggerAutoContinue(messageChunk, isImpersonate);
         }
 
@@ -6197,10 +6205,11 @@ function setInContextMessages(msgInContextCount, type) {
 /**
  * @typedef {object} AdditionalRequestOptions
  * @property {JsonSchema} [jsonSchema]
+ * @property {object} [background] Original chat, connection and tool settings for a recoverable generation
  */
 
 /**
- * Sends a non-streaming request to the API.
+ * Sends a non-streaming or recoverable background request to the API.
  * @param {string} type Generation type
  * @param {object} data Generation data
  * @param {AdditionalRequestOptions} [options] Additional options for the generation request
@@ -6212,6 +6221,12 @@ export async function sendGenerationRequest(type, data, options = {}) {
         return await sendOpenAIRequest(type, data.prompt, abortController.signal, options);
     }
 
+    if (options.background) {
+        const stream = isStreamingEnabled();
+        const payload = main_api === 'koboldhorde' ? createHordeTextPayload(data.prompt, data)
+            : main_api === 'textgenerationwebui' ? { ...data, stream } : { ...data, streaming: stream };
+        return runVertexJob(payload, options.background, abortController.signal);
+    }
     if (main_api === 'koboldhorde') {
         return await generateHorde(data.prompt, data, abortController.signal, true);
     }
@@ -6278,8 +6293,8 @@ export function getGenerateUrl(api) {
     }
 }
 
-function extractTitleFromData(data) {
-    if (main_api == 'koboldhorde') {
+function extractTitleFromData(data, api = main_api) {
+    if (api == 'koboldhorde') {
         return data.workerName;
     }
 
@@ -6465,7 +6480,7 @@ export function extractJsonFromData(data, { mainApi = null, chatCompletionSource
  * @param {string} type Type of generation
  * @returns {string[]} Array of extra swipes
  */
-function extractMultiSwipes(data, type) {
+function extractMultiSwipes(data, type, { mainApi = main_api, textGenType = textgen_settings.type } = {}) {
     const swipes = [];
 
     if (!data) {
@@ -6476,7 +6491,7 @@ function extractMultiSwipes(data, type) {
         return swipes;
     }
 
-    if (main_api === 'textgenerationwebui' && textgen_settings.type === textgen_types.LLAMACPP) {
+    if (mainApi === 'textgenerationwebui' && textGenType === textgen_types.LLAMACPP) {
         if (!Array.isArray(data)) {
             return swipes;
         }
@@ -6492,7 +6507,7 @@ function extractMultiSwipes(data, type) {
         }
     }
 
-    if (main_api === 'openai' || (main_api === 'textgenerationwebui' && [textgen_types.MANCER, textgen_types.VLLM, textgen_types.APHRODITE, textgen_types.TABBY, textgen_types.INFERMATICAI].includes(textgen_settings.type))) {
+    if (mainApi === 'openai' || (mainApi === 'textgenerationwebui' && [textgen_types.MANCER, textgen_types.VLLM, textgen_types.APHRODITE, textgen_types.TABBY, textgen_types.INFERMATICAI].includes(textGenType))) {
         if (!Array.isArray(data.choices)) {
             return swipes;
         }
@@ -6733,7 +6748,7 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], reasoningSignature = null, origin = null }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
@@ -6771,8 +6786,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             lastMessage.gen_started = generation_started;
             lastMessage.gen_finished = generationFinished;
             lastMessage.send_date = getMessageTimeStamp();
-            lastMessage.extra.api = getGeneratingApi();
-            lastMessage.extra.model = getGeneratingModel();
+            lastMessage.extra.api = origin?.source ?? getGeneratingApi();
+            lastMessage.extra.model = origin?.model ?? getGeneratingModel();
             lastMessage.extra.reasoning = reasoning;
             lastMessage.extra.reasoning_duration = null;
             lastMessage.extra.reasoning_signature = reasoningSignature;
@@ -6796,8 +6811,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         lastMessage.gen_started = generation_started;
         lastMessage.gen_finished = generationFinished;
         lastMessage.send_date = getMessageTimeStamp();
-        lastMessage.extra.api = getGeneratingApi();
-        lastMessage.extra.model = getGeneratingModel();
+        lastMessage.extra.api = origin?.source ?? getGeneratingApi();
+        lastMessage.extra.model = origin?.model ?? getGeneratingModel();
         lastMessage.extra.reasoning = reasoning;
         lastMessage.extra.reasoning_duration = null;
         lastMessage.extra.reasoning_signature = reasoningSignature;
@@ -6818,8 +6833,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         lastMessage.gen_started = generation_started;
         lastMessage.gen_finished = generationFinished;
         lastMessage.send_date = getMessageTimeStamp();
-        lastMessage.extra.api = getGeneratingApi();
-        lastMessage.extra.model = getGeneratingModel();
+        lastMessage.extra.api = origin?.source ?? getGeneratingApi();
+        lastMessage.extra.model = origin?.model ?? getGeneratingModel();
         lastMessage.extra.reasoning += reasoning;
         lastMessage.extra.reasoning_signature = reasoningSignature;
         await processImageAttachment(lastMessage, { imageUrls });
@@ -6840,8 +6855,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         newMessage.name = name2;
         newMessage.is_user = false;
         newMessage.send_date = getMessageTimeStamp();
-        newMessage.extra.api = getGeneratingApi();
-        newMessage.extra.model = getGeneratingModel();
+        newMessage.extra.api = origin?.source ?? getGeneratingApi();
+        newMessage.extra.model = origin?.model ?? getGeneratingModel();
         newMessage.extra.reasoning = reasoning;
         newMessage.extra.reasoning_duration = null;
         newMessage.extra.reasoning_signature = reasoningSignature;

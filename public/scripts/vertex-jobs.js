@@ -1,6 +1,9 @@
-import { chat, chat_metadata, characters, getCurrentChatId, getRequestHeaders, main_api, this_chid } from '../script.js';
+import { chat, chat_metadata, characters, getCurrentChatId, getRequestHeaders, getGeneratingApi, getGeneratingModel, main_api, this_chid } from '../script.js';
+import { horde_settings } from './horde.js';
 import { selected_group } from './group-chats.js';
-import { getChatCompletionModel, oai_settings } from './openai.js';
+import { getStreamingReply, oai_settings } from './openai.js';
+import { resolveSecretKey, secret_state } from './secrets.js';
+import { getTextGenServer } from './textgen-settings.js';
 import { getCurrentUserHandle } from './user.js';
 import { getStringHash, uuidv4 } from './utils.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -10,17 +13,23 @@ import { Popup, POPUP_TYPE } from './popup.js';
 import { t } from './i18n.js';
 import EventSourceStream from './sse-stream.js';
 
-const api = '/api/backends/chat-completions/vertex-jobs';
+const api = '/api/backends/chat-completions/generation-jobs';
 const key = () => 'linpeak.vertex.job.' + getCurrentUserHandle();
 const preference = () => key() + '.enabled';
-const delivery = Symbol('vertex job');
+const delivery = Symbol('generation job');
+const streamDetails = Symbol('streamed result');
+export const generationOrigin = data => data?.[delivery];
+export const generationStreamDetails = data => data?.[streamDetails];
 let active;
 let wake;
 let pageId;
 const element = id => document.getElementById(id);
 
 function pending() {
-    try { return JSON.parse(localStorage.getItem(key())); } catch { return null; }
+    try {
+        const job = JSON.parse(localStorage.getItem(key()));
+        return job ? { mainApi: 'openai', source: 'vertexai', ...job } : null;
+    } catch { return null; }
 }
 function store(job) { localStorage.setItem(key(), JSON.stringify(job)); }
 function update(job, phase) {
@@ -43,14 +52,43 @@ export function hasOriginalRegeneratedReply(job) {
     return job.type === 'regenerate' && job.replaced === vertexChatAnchor() && job.anchor === vertexChatAnchor(chat.length - 1);
 }
 function matches(job) {
-    return job.chat === chatKey() && (job.anchor === vertexChatAnchor() || hasOriginalRegeneratedReply(job)) && main_api === 'openai'
-        && oai_settings.chat_completion_source === 'vertexai' && getChatCompletionModel() === job.model;
+    return job.chat === chatKey() && (job.anchor === vertexChatAnchor() || hasOriginalRegeneratedReply(job));
 }
 
-export function backgroundVertexEnabled(type) {
+function connectionKey() {
+    const source = getGeneratingApi();
+    const settings = oai_settings;
+    let endpoint;
+    if (main_api === 'koboldhorde') endpoint = horde_settings.models;
+    else if (main_api === 'textgenerationwebui') endpoint = getTextGenServer();
+    else if (main_api === 'kobold') endpoint = element('api_url_text')?.value;
+    else if (main_api === 'openai') {
+        endpoint = [settings.reverse_proxy || ''];
+        if (source === 'custom') endpoint.push(settings.custom_url || '');
+        if (source === 'azure_openai') endpoint.push(settings.azure_base_url || '', settings.azure_deployment_name || '');
+        if (source === 'vertexai') endpoint.push(settings.vertexai_region || 'global', settings.vertexai_auth_mode || 'express', settings.vertexai_express_project_id || '');
+    }
+    const secret = resolveSecretKey();
+    const entries = secret_state[secret];
+    const activeId = Array.isArray(entries) ? entries.find(entry => entry.active)?.id : null;
+    const revision = secret ? localStorage.getItem(key() + '.revision.' + secret) : null;
+    const selectedModel = main_api === 'koboldhorde' ? '' : getGeneratingModel();
+    return getStringHash(JSON.stringify([main_api, source, selectedModel || '', endpoint, activeId || null, revision]));
+}
+export function isOriginalConnection(job) {
+    if (!job) return true;
+    if (job.connection !== undefined) return job.source === getGeneratingApi() && job.connection === connectionKey();
+    return main_api === job.mainApi && getGeneratingApi() === job.source && getGeneratingModel() === job.model;
+}
+
+export function captureGenerationOrigin() {
+    return { mainApi: main_api, source: getGeneratingApi(), model: getGeneratingModel(), connection: connectionKey(),
+        showThoughts: !!oai_settings.show_thoughts, chat: chatKey(), anchor: vertexChatAnchor() };
+}
+
+export function backgroundGenerationEnabled(type) {
     const pref = localStorage.getItem(preference());
-    return (pref === null ? isMobile() : pref === 'true') && main_api === 'openai'
-        && oai_settings.chat_completion_source === 'vertexai' && !oai_settings.reverse_proxy
+    return (pref === null ? isMobile() : pref === 'true') && ['openai', 'textgenerationwebui', 'kobold', 'novel', 'koboldhorde'].includes(main_api)
         && [undefined, 'normal', 'regenerate'].includes(type);
 }
 
@@ -62,7 +100,14 @@ export function hasPendingVertexJob() {
 function controls() {
     const job = pending();
     element('vertex_job_bar').hidden = !active && !job;
+    element('generation_job_origin').textContent = job ? [job.source, job.model].filter(Boolean).join(' · ') : '';
     element('vertex_job_time').hidden = job?.phase !== 'waiting';
+    const expiry = element('generation_job_expiry');
+    expiry.hidden = !job?.resultExpiresAt || !['delivered', 'claimed', 'needs-tool'].includes(job.phase);
+    if (!expiry.hidden) {
+        const time = new Date(job.resultExpiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        expiry.textContent = t`Temporary copy until ${time}`;
+    }
     element('vertex_job_cancel').hidden = !(job?.phase === 'waiting' || job?.phase === 'cancel');
     element('vertex_job_open').hidden = !!active || !job || ['cancel', 'expired'].includes(job.phase);
     element('vertex_job_dismiss').hidden = !job || !['claimed', 'delivered', 'needs-tool', 'expired'].includes(job.phase);
@@ -72,7 +117,7 @@ function url(job, suffix = '') { return api + '/' + encodeURIComponent(job.id) +
 function post(body) { return { method: 'POST', headers: getRequestHeaders(), body: JSON.stringify(body) }; }
 async function checked(response) {
     if (response.ok) return response;
-    const error = new Error(t`Vertex task returned HTTP ${response.status}.`);
+    const error = new Error(t`Generation task returned HTTP ${response.status}.`);
     error.status = response.status;
     throw error;
 }
@@ -84,7 +129,8 @@ async function readWhileConnected(operation, job) {
     for (;;) {
         if (job.phase === 'cancel' || pending()?.phase === 'cancel') throw new DOMException('Stopped', 'AbortError');
         try { return await operation(); } catch (err) {
-            if (!(err instanceof TypeError) && err.name !== 'TimeoutError') throw err;
+            const temporary = [408, 425, 429, 502, 503, 504].includes(err.status);
+            if (!temporary && !(err instanceof TypeError) && err.name !== 'TimeoutError') throw err;
             status(t`Connection lost. Reconnecting to the same task…`);
             await pause(retryMs);
             retryMs = Math.min(retryMs * 2, 15000);
@@ -104,7 +150,7 @@ async function stop(job = pending()) {
     if (active?.id === job.id) active.phase = 'cancel';
     update(job, 'cancel');
     wake?.();
-    status(t`Stopping the Vertex task…`);
+    status(t`Stopping the generation…`);
     try {
         const res = await fetch(url(job), { method: 'DELETE', headers: getRequestHeaders(), signal: AbortSignal.timeout(15000) });
         if (!res.ok && res.status !== 404) await checked(res);
@@ -116,24 +162,59 @@ async function stop(job = pending()) {
     controls();
 }
 
-async function decodeResult(response, streamed) {
-    if (!response.ok || !streamed) {
-        const value = await response.json();
-        if (!response.ok || value?.error) throw new Error(value?.error?.message || value?.message || t`Vertex generation failed.`);
+async function decodeResult(response, bytes, job) {
+    const prefix = new TextDecoder().decode(bytes.slice(0, 256)).trimStart();
+    if (!response.ok || !job.stream || prefix.startsWith('{') || prefix.startsWith('[')) {
+        const body = new TextDecoder().decode(bytes);
+        let value;
+        try {
+            value = JSON.parse(body);
+        } catch {
+            throw new Error(response.ok ? t`The provider returned an incomplete reply.` : t`Generation task returned HTTP ${response.status}.`);
+        }
+        if (!response.ok || value?.error) throw new Error(value?.error?.message || value?.message || value?.response || t`Generation failed.`);
         return value;
     }
     const parser = new EventSourceStream();
-    const pipe = response.body.pipeTo(parser.writable);
+    const pipe = new Response(bytes).body.pipeTo(parser.writable);
+    const google = ['vertexai', 'makersuite'].includes(job.source);
     const parts = [];
+    const toolCalls = [];
+    const choices = [];
+    const state = { reasoning: '', images: [], signature: '', toolSignatures: {} };
     let finished = false;
     const reader = parser.readable.getReader();
     try {
         for (;;) {
             const { value, done } = await reader.read();
             if (done) break;
-            if (value.data === '[DONE]') continue;
+            if (value.data === '[DONE]') { if (!google) finished = true; continue; }
             const data = JSON.parse(value.data);
-            if (data.error) throw new Error(data.error.message || t`Vertex generation failed.`);
+            if (data.error) throw new Error(data.error.message || t`Generation failed.`);
+            if (job.mainApi !== 'openai') {
+                const variants = data.choices?.length ? data.choices : [data];
+                for (const variant of variants) {
+                    const index = variant.index || 0;
+                    if (!Number.isSafeInteger(index) || index < 0 || index > 127) throw new Error('Invalid streamed choice index');
+                    choices[index] = (choices[index] || '') + (variant.text ?? variant.delta?.content ?? variant.token ?? variant.content ?? '');
+                    if (!index) state.reasoning += variant.reasoning ?? variant.delta?.reasoning ?? variant.delta?.reasoning_content ?? variant.thinking ?? '';
+                }
+                continue;
+            }
+            if (!google) {
+                if (data.type === 'message_stop' || data.type === 'message-end' || data.choices?.some(c => !c.index && c.finish_reason)) finished = true;
+                const fragments = data.choices?.length ? data.choices.map(choice => ({ chunk: { ...data, choices: [choice] }, index: choice.index || 0 })) : [{ chunk: data, index: 0 }];
+                for (const { chunk, index } of fragments) {
+                    if (!Number.isSafeInteger(index) || index < 0 || index > 127) throw new Error('Invalid streamed choice index');
+                    choices[index] = (choices[index] || '') + getStreamingReply(chunk, index ? { reasoning: '', images: [], toolSignatures: {} } : state, {
+                        chatCompletionSource: job.source, overrideShowThoughts: !index && job.showThoughts,
+                    });
+                }
+                if (data.type !== 'message-start' || data.delta?.message?.tool_calls) {
+                    ToolManager.parseToolCalls(toolCalls, data, state.toolSignatures, true);
+                }
+                continue;
+            }
             const candidate = data.candidates?.[0];
             if (candidate?.finishReason) finished = true;
             for (const part of candidate?.content?.parts || []) {
@@ -149,19 +230,43 @@ async function decodeResult(response, streamed) {
         reader.releaseLock();
         await pipe.catch(() => {});
     }
-    if (!finished || !parts.length) throw new Error(t`Vertex returned an incomplete reply.`);
+    if (job.mainApi !== 'openai') {
+        if (!choices.length) throw new Error(t`The provider returned an incomplete reply.`);
+        const result = job.mainApi === 'kobold' ? { results: [{ text: choices[0] }] } : job.mainApi === 'novel' ? { output: choices[0] }
+            : job.textGenType === 'llamacpp' ? Array.from(choices, text => ({ content: text || '' }))
+                : { choices: Array.from(choices, (text, index) => ({ text: text || '', index })) };
+        result[streamDetails] = state;
+        return result;
+    }
+    if (!google) {
+        const calls = ToolManager.getToolCallsFromData(toolCalls, true) || [];
+        if ((!choices[0] && !state.reasoning && !state.images.length && !calls.length) || (calls.length && !finished)) {
+            throw new Error(t`The provider returned an incomplete reply.`);
+        }
+        const result = { choices: Array.from(choices, (content, index) => ({ index, message: { content: content || '' } })) };
+        if (calls.length) {
+            for (const call of calls) {
+                if (!call?.function?.name) throw new Error(t`The provider returned an incomplete reply.`);
+                if (typeof call.function.arguments === 'string' && call.function.arguments) JSON.parse(call.function.arguments);
+            }
+            result.choices[0].message.tool_calls = calls;
+        }
+        result[streamDetails] = state;
+        return result;
+    }
+    if (!finished || !parts.length) throw new Error(t`The provider returned an incomplete reply.`);
     const content = parts.filter(p => !p.thought && typeof p.text === 'string').map(p => p.text).join('');
     return { choices: [{ message: { content } }], responseContent: { parts } };
 }
 
 async function result(job) {
     // Buffer a complete download before decoding or claiming it. A lost GET has no side effects.
-    const response = await readWhileConnected(async () => {
+    const { res, bytes } = await readWhileConnected(async () => {
         const res = await fetch(url(job, '/result'), { cache: 'no-store', signal: AbortSignal.timeout(90000) });
-        if ([404, 409].includes(res.status) && !res.headers.get('content-type')?.includes('json')) await checked(res);
-        return new Response(await res.arrayBuffer(), { status: res.status, headers: res.headers });
+        if (!res.ok && !res.headers.has('X-Linpeak-Job-Result')) await checked(res);
+        return { res, bytes: await res.arrayBuffer() };
     }, job);
-    return decodeResult(response, job.stream);
+    return decodeResult(res, bytes, job);
 }
 
 async function foreground(job) {
@@ -180,14 +285,14 @@ async function receive(job) {
             const seconds = Math.max(0, Math.floor((Date.now() - job.started) / 1000));
             element('vertex_job_time').textContent = Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
         }
-        if (meta.state === 'ready') break;
+        if (meta.state === 'ready') { job.resultExpiresAt = meta.expiresAt; break; }
         if (meta.state === 'claimed') {
             update(job, 'claimed');
             throw new Error(t`This result has already been picked up. You can view it without running tools again.`);
         }
         if (meta.state === 'failed') {
             update(job, 'expired');
-            throw new Error(t`Vertex disconnected or exceeded the recovery limit.`);
+            throw new Error(t`The provider disconnected or exceeded the recovery limit.`);
         }
         status(meta.state === 'reserved' ? t`Waiting for submission confirmation…` : meta.tool ? t`Received a tool call. Waiting for completion…` : meta.thought ? t`Receiving model reasoning…`
             : meta.bytes ? t`Receiving the reply…` : job.stream ? t`Submitted. Waiting for the first model data…` : t`Submitted. Waiting for the complete reply…`);
@@ -198,13 +303,14 @@ async function receive(job) {
         if (error.name !== 'AbortError') update(job, 'expired');
         throw error;
     }
-    if (!matches(job)) throw new Error(t`Open the original chat and model to receive this reply.`);
+    if (!matches(job)) throw new Error(t`Open the original chat to receive this reply.`);
     await foreground(job);
     if (!matches(job)) throw new Error(t`The chat changed.`);
-    const calls = data.responseContent?.parts?.filter(part => part.functionCall) || [];
+    if (job.mainApi === 'koboldhorde' && data.model) job.model = data.model;
+    const calls = job.mainApi === 'openai' ? ToolManager.getToolCallsFromData(data) || [] : [];
     if (calls.length) {
         const names = new Set(ToolManager.tools.map(tool => tool.toFunctionOpenAI().function.name));
-        if (!job.canPerformToolCalls || !ToolManager.canPerformToolCalls(job.type) || calls.some(part => !names.has(part.functionCall.name))) {
+        if (!job.canPerformToolCalls || calls.some(call => !names.has(call.function?.name))) {
             update(job, 'needs-tool');
             throw new Error(t`The required tool is unavailable. Open the saved reply to read its complete arguments.`);
         }
@@ -227,8 +333,11 @@ async function receive(job) {
 }
 
 export async function runVertexJob(payload, options, signal) {
-    if (active || hasPendingVertexJob()) throw new Error(t`A Vertex task is already pending.`);
-    const job = { ...options, chat: chatKey(), anchor: vertexChatAnchor(), model: payload.model, stream: !!payload.stream, started: Date.now(), phase: 'waiting' };
+    if (active || hasPendingVertexJob()) throw new Error(t`A generation task is already pending.`);
+    const origin = options.mainApi ? options : { ...captureGenerationOrigin(), ...options };
+    const job = { ...origin, source: payload.chat_completion_source || origin.source,
+        model: payload.model || payload.models?.join(', ') || origin.model, textGenType: payload.api_type,
+        stream: !!(payload.stream ?? payload.streaming), started: Date.now(), phase: 'waiting' };
     const previous = pending();
     if (previous?.phase === 'delivered' || previous?.phase === 'expired') {
         void fetch(url(previous), { method: 'DELETE', headers: getRequestHeaders() }).catch(() => {});
@@ -243,9 +352,9 @@ export async function runVertexJob(payload, options, signal) {
         signal.addEventListener('abort', cancel, { once: true });
         if (signal.aborted) { await stop(job); throw new DOMException('Stopped', 'AbortError'); }
         if (!matches(job)) { await stop(job); throw new Error(t`The chat changed.`); }
-        status(t`Submitting to Vertex…`);
+        status(t`Submitting the generation…`);
         try {
-            await checked(await fetch(url(job, '/start'), { ...post(payload), signal: AbortSignal.timeout(120000) }));
+            await checked(await fetch(url(job, '/start') + (job.mainApi === 'openai' ? '' : '?transport=' + encodeURIComponent(job.mainApi)), { ...post(payload), signal: AbortSignal.timeout(120000) }));
         } catch (err) {
             if (!(err instanceof TypeError) && err.name !== 'TimeoutError') throw err;
         }
@@ -292,6 +401,9 @@ export function initVertexJobs(applyRecovered) {
         setting.checked = localStorage.getItem(preference()) === null ? isMobile() : localStorage.getItem(preference()) === 'true';
         initialized = true;
     });
+    for (const event of [event_types.SECRET_WRITTEN, event_types.SECRET_EDITED, event_types.SECRET_ROTATED, event_types.SECRET_DELETED]) {
+        eventSource.on(event, secret => localStorage.setItem(key() + '.revision.' + secret, uuidv4()));
+    }
     setting.onchange = () => localStorage.setItem(preference(), String(setting.checked));
     element('vertex_job_cancel').onclick = () => stop(active || pending());
     element('vertex_job_dismiss').onclick = () => {
@@ -305,6 +417,7 @@ export function initVertexJobs(applyRecovered) {
     async function reconnect(manual = false) {
         wake?.();
         const job = pending();
+        if (job?.resultExpiresAt <= Date.now() && ['claimed', 'delivered', 'needs-tool'].includes(job.phase)) update(job, 'expired');
         controls();
         if (!initialized || !job) return;
         if (job.phase === 'cancel') return stop(job);
@@ -324,7 +437,7 @@ export function initVertexJobs(applyRecovered) {
             return;
         }
         if (!matches(job)) {
-            status(t`Open the original chat and model to receive this reply.`);
+            status(t`Open the original chat to receive this reply.`);
             if (manual) await view(job).catch(error => handleError(job, error));
             return;
         }

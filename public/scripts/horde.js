@@ -199,7 +199,8 @@ function setContextSizePreview() {
  * @returns {Promise<{text: *, workerName: string}>}
  * @throws {Error}
  */
-export async function generateHorde(prompt, params, signal, reportProgress) {
+export function createHordeTextPayload(prompt, params) {
+    params = { ...params };
     validateHordeModel();
     delete params.prompt;
 
@@ -210,13 +211,17 @@ export async function generateHorde(prompt, params, signal, reportProgress) {
     params.frmtrmspch = false;
     params.frmttriminc = false;
 
-    const payload = {
+    return {
         'prompt': prompt,
         'params': params,
         'trusted_workers': horde_settings.trusted_workers_only,
         //"slow_workers": false,
         'models': horde_settings.models,
     };
+}
+
+export async function generateHorde(prompt, params, signal, reportProgress) {
+    const payload = createHordeTextPayload(prompt, params);
 
     const response = await fetch('/api/horde/generate-text', {
         method: 'POST',

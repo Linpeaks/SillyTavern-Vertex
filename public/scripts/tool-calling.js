@@ -3,6 +3,7 @@ import { DOMPurify } from '../lib.js';
 import { addOneMessage, chat, event_types, eventSource, getGeneratingApi, getGeneratingModel, main_api, saveChatConditional, system_avatar, systemUserName } from '../script.js';
 import { chat_completion_sources, custom_prompt_post_processing_types, getChatCompletionModel, model_list, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
+import { t } from './i18n.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
 import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
@@ -423,18 +424,19 @@ export class ToolManager {
      * @param {any[]} toolCalls The tool calls to update.
      * @param {any} parsed The parsed response from the OpenAI API.
      * @param {object} toolSignatures Optional mapping of tool call IDs to thought signatures.
+     * @param {boolean} enabled Whether to collect calls for this request.
      * @returns {void}
      */
-    static parseToolCalls(toolCalls, parsed, toolSignatures = {}) {
-        if (!this.isToolCallingSupported()) {
+    static parseToolCalls(toolCalls, parsed, toolSignatures = {}, enabled = this.isToolCallingSupported()) {
+        if (!enabled) {
             return;
         }
         if (Array.isArray(parsed?.choices)) {
-            for (const choice of parsed.choices) {
-                const choiceIndex = (typeof choice.index === 'number') ? choice.index : null;
+            for (const [position, choice] of parsed.choices.entries()) {
+                const choiceIndex = choice.index ?? position;
                 const choiceDelta = choice.delta;
 
-                if (choiceIndex === null || !choiceDelta) {
+                if (!Number.isSafeInteger(choiceIndex) || choiceIndex < 0 || !choiceDelta) {
                     continue;
                 }
 
@@ -703,9 +705,10 @@ export class ToolManager {
     /**
      * Utility function to get tool calls from the response data.
      * @param {any} data Response data
+     * @param {boolean} [requireComplete] Reject unfinished streamed tool arguments before delivery.
      * @returns {any[]} Tool calls from the response data
      */
-    static #getToolCallsFromData(data) {
+    static getToolCallsFromData(data, requireComplete = false) {
         const getRandomId = () => Math.random().toString(36).substring(2);
         const isClaudeToolCall = c => Array.isArray(c) ? c.filter(x => x).every(isClaudeToolCall) : c?.input && c?.name && c?.id;
         const isGoogleToolCall = c => Array.isArray(c) ? c.filter(x => x).every(isGoogleToolCall) : c?.name && c?.args;
@@ -719,6 +722,9 @@ export class ToolManager {
 
         // Parsed tool calls from streaming data
         if (Array.isArray(data) && data.length > 0 && Array.isArray(data[0])) {
+            if (requireComplete && data[0].some(call => call && Object.hasOwn(call, this.#INPUT_DELTA_KEY))) {
+                throw new Error(t`The provider returned an incomplete reply.`);
+            }
             if (isClaudeToolCall(data[0])) {
                 return data[0].filter(x => x).map(convertClaudeToolCall);
             }
@@ -742,7 +748,7 @@ export class ToolManager {
         // Parsed tool calls from non-streaming data
         if (Array.isArray(data?.choices)) {
             // Find a choice with 0-index
-            const choice = data.choices.find(choice => choice.index === 0);
+            const choice = data.choices.find(choice => choice.index === 0) ?? data.choices[0];
 
             if (choice && typeof choice.message === 'object' && Array.isArray(choice.message.tool_calls)) {
                 // Add OpenRouter signatures
@@ -780,7 +786,7 @@ export class ToolManager {
      * @returns {boolean} Whether the response data contains tool calls
      */
     static hasToolCalls(data) {
-        const toolCalls = ToolManager.#getToolCallsFromData(data);
+        const toolCalls = ToolManager.getToolCallsFromData(data);
         return Array.isArray(toolCalls) && toolCalls.length > 0;
     }
 
@@ -796,7 +802,7 @@ export class ToolManager {
             errors: [],
             stealthCalls: [],
         };
-        const toolCalls = ToolManager.#getToolCallsFromData(data);
+        const toolCalls = ToolManager.getToolCallsFromData(data);
 
         if (!Array.isArray(toolCalls)) {
             return result;
@@ -903,8 +909,9 @@ export class ToolManager {
     /**
      * Saves function tool invocations to the last user chat message extra metadata.
      * @param {ToolInvocation[]} invocations Successful tool invocations
+     * @param {{source: string, model: string}} [origin] Connection that produced the calls.
      */
-    static async saveFunctionToolInvocations(invocations) {
+    static async saveFunctionToolInvocations(invocations, origin = null) {
         if (!Array.isArray(invocations) || invocations.length === 0) {
             return;
         }
@@ -917,8 +924,8 @@ export class ToolManager {
             extra: {
                 isSmallSys: true,
                 tool_invocations: invocations,
-                api: getGeneratingApi(),
-                model: getGeneratingModel(),
+                api: origin?.source ?? getGeneratingApi(),
+                model: origin?.model ?? getGeneratingModel(),
             },
         };
         chat.push(message);
