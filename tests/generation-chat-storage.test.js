@@ -73,6 +73,8 @@ test.each([[false, false], [true, false], [false, true], [true, true]])('saves w
     expect((await fetch(url + '/' + id)).status).toBe(404);
     expect(await (await fetch(url + '/saved/' + id, post(target))).json()).toEqual({ saved: true });
     const edited = records(file);
+    expect(await trySaveChat(edited, file, false, 'fixture', 'Speaker', directories.backups)).toBe(id);
+    expect(records(file)[0].chat_metadata.linpeak_revision).toBe(id);
     edited[2].mes = 'my edit';
     await trySaveChat(edited, file, false, 'fixture', 'Speaker', directories.backups);
     expect(records(file)[2].mes).toBe('my edit');

@@ -540,6 +540,12 @@ export async function trySaveChat(chatData, filePath, skipIntegrityCheck = false
         if (checkIntegrity && !skipIntegrityCheck && metadata?.integrity && !checkChatIntegrity(filePath, metadata.integrity, header)) {
             throw new IntegrityMismatchError('Chat integrity check failed for "' + filePath + '".');
         }
+        // Opening a chat may save the identical snapshot before the pending tool handler runs.
+        // Only an actual edit consumes the original revision and invalidates that handoff.
+        if (revision && chatData.at(-1)?.extra?.linpeak_job === revision && chatData.at(-1).extra.linpeak_autosaved) {
+            const incoming = chatData.map(row => JSON.stringify(row)).join('\n');
+            if (fs.readFileSync(filePath, 'utf8') === incoming) return revision;
+        }
         // A tab which loaded the autosaved reply can edit it. Older snapshots cannot overwrite it.
         const nextRevision = revision && (revision.startsWith('seen:') ? revision : 'seen:' + revision);
         if (metadata) {

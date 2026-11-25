@@ -18,6 +18,7 @@ async function openTestChat(page) {
 }
 
 test.afterEach(async ({ page }) => {
+    if (page.isClosed()) return;
     await page.evaluate(async () => {
         const job = JSON.parse(localStorage.getItem('linpeak.vertex.job.default-user'));
         if (job?.id) await fetch('/api/backends/chat-completions/generation-jobs/' + job.id, {
@@ -246,3 +247,85 @@ test('Cohere stream is decoded using its original source after switching to anot
     expect(await page.evaluate(() => window.cohereRequest)).toEqual(['Cohere reply', 'cohere', 'command-test']);
     expect(submissions).toBe(1);
 });
+
+async function returnToChat(mode, page, context, lifecycle, target) {
+    const next = mode === 'frozen' ? page : await context.newPage();
+    if (mode === 'frozen') {
+        await lifecycle.send('Page.setWebLifecycleState', { state: 'active' });
+        await next.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    } else {
+        await openTestChat(next);
+        await next.evaluate(async ({ avatar_url, file_name }) => {
+            const core = await import('./script.js');
+            const index = core.characters.findIndex(c => c.avatar === avatar_url);
+            await core.selectCharacterById(index);
+            if (core.getCurrentChatId() !== file_name) await core.openCharacterChat(file_name);
+        }, { avatar_url: target.avatar_url, file_name: target.file_name });
+    }
+    return next;
+}
+
+for (const [mode, evict] of [['closed', true], ['frozen', true], ['closed', false]]) {
+    const suspend = mode === 'closed' ? page => page.close() : (_, session) => session.send('Page.setWebLifecycleState', { state: 'frozen' });
+    const clearCache = evict ? (request, url, headers) => request.delete(url, { headers }) : () => {};
+    test(`a ${mode} page can read the saved reply (cache evicted: ${evict})`, async ({ page, context }) => {
+        const calls = [];
+        let complete;
+        const provider = http.createServer(async (req, res) => {
+            const chunks = [];
+            for await (const chunk of req) chunks.push(chunk);
+            calls.push(JSON.parse(Buffer.concat(chunks)));
+            complete = () => {
+                res.writeHead(200, { 'content-type': 'application/json' });
+                const message = mode === 'closed' ? { content: 'Saved overnight by the original model' }
+                    : { content: null, tool_calls: [{ id: 'original-tool', type: 'function',
+                        function: { name: 'save_story', arguments: JSON.stringify({ body: 'Saved overnight by the original model' }) } }] };
+                res.end(JSON.stringify({ choices: [{ message }] }));
+            };
+        });
+        provider.listen(0, '127.0.0.1');
+        await once(provider, 'listening');
+        try {
+            await openTestChat(page);
+            const target = await page.evaluate(async port => {
+                const core = await import('./script.js');
+                const { oai_settings } = await import('./scripts/openai.js');
+                await core.newAssistantChat({ temporary: false });
+                core.changeMainAPI('openai');
+                Object.assign(oai_settings, { chat_completion_source: 'custom', custom_url: 'http://127.0.0.1:' + port + '/v1',
+                    custom_model: 'overnight', stream_openai: false, function_calling: false });
+                core.setOnlineStatus('test');
+                const box = document.querySelector('#vertex_job_enabled');
+                box.checked = true;
+                box.dispatchEvent(new Event('change'));
+                document.querySelector('#send_textarea').value = 'Synthetic overnight request';
+                void core.Generate('normal');
+                return { file_name: core.getCurrentChatId(), avatar_url: core.characters[core.this_chid].avatar, headers: core.getRequestHeaders() };
+            }, provider.address().port);
+            await expect.poll(() => calls.length).toBe(1);
+            const id = await page.evaluate(() => JSON.parse(localStorage.getItem('linpeak.vertex.job.default-user')).id);
+            const lifecycle = await context.newCDPSession(page);
+            await suspend(page, lifecycle);
+            complete();
+            const load = async () => (await context.request.post('/api/chats/get', { headers: target.headers,
+                data: { file_name: target.file_name, avatar_url: target.avatar_url } })).json();
+            await expect.poll(async () => (await load()).at(-1)?.extra?.linpeak_job).toBe(id);
+            const rows = await load();
+            expect(rows.at(-1)).toMatchObject({ mes: 'Saved overnight by the original model', extra: { api: 'custom', model: 'overnight' } });
+            // Evict the same in-memory entry the one-hour timer drops. The chat file is independent.
+            await clearCache(context.request, '/api/backends/chat-completions/generation-jobs/' + id, target.headers);
+            const next = await returnToChat(mode, page, context, lifecycle, target);
+            try {
+                await expect(next.locator('#chat .mes_text').filter({ hasText: 'Saved overnight by the original model' })).toHaveCount(1);
+                await expect(next.locator('#vertex_job_status')).toContainText('Reply saved');
+                const stored = (await load()).filter(row => row.extra?.linpeak_job === id);
+                expect(stored).toHaveLength(1);
+                await expect.poll(async () => Boolean((await load()).find(row => row.extra?.linpeak_job === id)?.extra.linpeak_autosaved)).toBe(evict);
+                expect(calls).toHaveLength(1);
+            } finally { await next.close(); }
+        } finally {
+            provider.closeAllConnections();
+            await new Promise(resolve => provider.close(resolve));
+        }
+    });
+}

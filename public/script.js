@@ -249,7 +249,7 @@ import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_set
 import { loader } from './scripts/action-loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { initTextGenModels } from './scripts/textgen-models.js';
-import { vertexChatAnchor, hasOriginalRegeneratedReply, backgroundGenerationEnabled, captureGenerationOrigin, generationOrigin, generationStreamDetails, isOriginalConnection, runVertexJob, hasPendingVertexJob, initVertexJobs, cancelVertexJob, finishVertexDelivery } from './scripts/vertex-jobs.js';
+import { savedChatReply, acceptSavedRevision, savedRevisionAcknowledged, vertexChatAnchor, hasOriginalRegeneratedReply, backgroundGenerationEnabled, captureGenerationOrigin, generationOrigin, generationStreamDetails, isOriginalConnection, runVertexJob, hasPendingVertexJob, initVertexJobs, cancelVertexJob, finishVertexDelivery } from './scripts/vertex-jobs.js';
 import { applyTurnImageScope, takeDraftImageScope } from './scripts/composer-attachments.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
@@ -743,6 +743,7 @@ async function firstLoadInit() {
     initVertexJobs(async (job, receive) => {
         if (is_send_press) return;
         const data = await receive();
+        if (data === savedChatReply) return;
         if (hasOriginalRegeneratedReply(job)) await deleteLastMessage();
         generation_started = new Date(job.started);
         abortController = new AbortController();
@@ -5564,6 +5565,7 @@ function generationResultHandler({ type, originalType, isImpersonate, isContinue
      */
     return async function onSuccess(data) {
         if (!data) return;
+        if (data === savedChatReply) { unblockGeneration(type); return; }
 
         if (data?.fromStream) {
             return data;
@@ -5662,9 +5664,9 @@ function generationResultHandler({ type, originalType, isImpersonate, isContinue
                     return;
                 }
 
-                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, origin);
+                await ToolManager.saveFunctionToolInvocations(invocationResult.invocations, origin, () => acceptSavedRevision(origin));
                 finishVertexDelivery(data);
-                if (isOriginalConnection(origin)) return Generate('normal', followup);
+                if (isOriginalConnection(origin) && savedRevisionAcknowledged(origin)) return Generate('normal', followup);
                 unblockGeneration(type);
                 toastr.info(t`Tool results saved. Continue with your selected connection when ready.`);
                 return;
@@ -5677,18 +5679,24 @@ function generationResultHandler({ type, originalType, isImpersonate, isContinue
 
         const isAborted = abortController && abortController.signal.aborted;
         if (isOriginalConnection(origin) && !isAborted && power_user.auto_swipe && generatedTextFiltered(getMessage)) {
+            if (origin?.saved) {
+                acceptSavedRevision(origin);
+                await saveChatConditional();
+                if (!savedRevisionAcknowledged(origin)) { finishVertexDelivery(data); unblockGeneration(type); return; }
+            }
             is_send_press = false;
             finishVertexDelivery(data);
             return await swipe(null, SWIPE_DIRECTION.RIGHT, { source: SWIPE_SOURCE.AUTO_SWIPE, repeated: true, forceMesId: chat.length - 1 });
         }
 
         console.debug('/api/chats/save called by /Generate');
+        acceptSavedRevision(origin);
         await saveChatConditional();
         finishVertexDelivery(data);
         unblockGeneration(type);
         streamingProcessor = null;
 
-        if (type !== 'quiet' && isOriginalConnection(origin)) {
+        if (type !== 'quiet' && isOriginalConnection(origin) && savedRevisionAcknowledged(origin)) {
             triggerAutoContinue(messageChunk, isImpersonate);
         }
 
@@ -6851,7 +6859,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         console.debug('entering chat update routine for non-swipe post');
         const newMessage = {};
         chat.push(newMessage);
-        newMessage.extra = {};
+        newMessage.extra = origin?.saved ? { linpeak_job: origin.id } : {};
         newMessage.name = name2;
         newMessage.is_user = false;
         newMessage.send_date = getMessageTimeStamp();
@@ -7556,6 +7564,15 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, c
         const result = await fetch('/api/chats/save', saveChatRequest);
 
         if (result.ok) {
+            if (!metadata.linpeak_revision) return;
+            const { revision } = await result.json();
+            if (revision && getCurrentChatId() === fileName && chat_metadata.integrity === metadata.integrity && chat_metadata.linpeak_revision === metadata.linpeak_revision) {
+                chat_metadata.linpeak_revision = revision;
+            }
+            return;
+        }
+        if (result.status === 409) {
+            toastr.warning(t`The chat changed on the server. Reopen it to see the saved reply before editing.`);
             return;
         }
 

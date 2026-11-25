@@ -641,7 +641,15 @@ async function saveGroupChat(groupId, shouldSaveGroup, force = false) {
     });
     const response = await fetch('/api/chats/group/save', saveGroupChatRequest);
 
-    if (!response.ok) {
+    if (response.ok) {
+        const revision = chatHeader.chat_metadata.linpeak_revision && (await response.json()).revision;
+        if (revision && getCurrentChatId() === chatId && chat_metadata.integrity === chatHeader.chat_metadata.integrity &&
+            chat_metadata.linpeak_revision === chatHeader.chat_metadata.linpeak_revision) chat_metadata.linpeak_revision = revision;
+    } else {
+        if (response.status === 409) {
+            toastr.warning(t`The chat changed on the server. Reopen it to see the saved reply before editing.`);
+            return;
+        }
         const errorData = await response.json();
         const isIntegrityError = errorData?.error === 'integrity' && !force;
         if (!isIntegrityError) {

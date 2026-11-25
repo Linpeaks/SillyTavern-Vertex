@@ -909,9 +909,10 @@ export class ToolManager {
     /**
      * Saves function tool invocations to the last user chat message extra metadata.
      * @param {ToolInvocation[]} invocations Successful tool invocations
-     * @param {{source: string, model: string}} [origin] Connection that produced the calls.
+     * @param {{source: string, model: string, saved?: boolean, id?: string}} [origin] Connection that produced the calls.
+     * @param {Function} [beforeSave] Acknowledge the saved reply when its tool result is ready to write.
      */
-    static async saveFunctionToolInvocations(invocations, origin = null) {
+    static async saveFunctionToolInvocations(invocations, origin = null, beforeSave = null) {
         if (!Array.isArray(invocations) || invocations.length === 0) {
             return;
         }
@@ -923,6 +924,7 @@ export class ToolManager {
             mes: ToolManager.#formatToolInvocationMessage(invocations),
             extra: {
                 isSmallSys: true,
+                ...(origin?.saved ? { linpeak_job: origin.id } : {}),
                 tool_invocations: invocations,
                 api: origin?.source ?? getGeneratingApi(),
                 model: origin?.model ?? getGeneratingModel(),
@@ -932,6 +934,7 @@ export class ToolManager {
         await eventSource.emit(event_types.TOOL_CALLS_PERFORMED, invocations);
         addOneMessage(message);
         await eventSource.emit(event_types.TOOL_CALLS_RENDERED, invocations);
+        beforeSave?.();
         await saveChatConditional();
     }
 

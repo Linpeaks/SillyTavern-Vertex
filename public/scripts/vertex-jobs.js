@@ -1,6 +1,7 @@
-import { chat, chat_metadata, characters, getCurrentChatId, getRequestHeaders, getGeneratingApi, getGeneratingModel, main_api, this_chid } from '../script.js';
+import { chat, chat_metadata, characters, name2, deleteLastMessage, reloadCurrentChat, getCurrentChatId, getRequestHeaders, getGeneratingApi, getGeneratingModel, main_api, this_chid } from '../script.js';
+import { chatAnchor } from './util/chat-anchor.js';
 import { horde_settings } from './horde.js';
-import { selected_group } from './group-chats.js';
+import { selected_group, group_generation_id } from './group-chats.js';
 import { getStreamingReply, oai_settings } from './openai.js';
 import { resolveSecretKey, secret_state } from './secrets.js';
 import { getTextGenServer } from './textgen-settings.js';
@@ -18,6 +19,7 @@ const key = () => 'linpeak.vertex.job.' + getCurrentUserHandle();
 const preference = () => key() + '.enabled';
 const delivery = Symbol('generation job');
 const streamDetails = Symbol('streamed result');
+export const savedChatReply = Symbol('reply already in the chat file');
 export const generationOrigin = data => data?.[delivery];
 export const generationStreamDetails = data => data?.[streamDetails];
 let active;
@@ -46,13 +48,56 @@ function chatKey() {
     return JSON.stringify([selected_group || '', characters[this_chid]?.avatar || '', id || pageId, chat_metadata.integrity || '']);
 }
 export function vertexChatAnchor(count = chat.length, last = chat[count - 1]) {
-    return JSON.stringify([count, last?.send_date, last?.swipe_id, getStringHash(String(last?.mes ?? ''))]);
+    return chatAnchor(count, last);
 }
 export function hasOriginalRegeneratedReply(job) {
     return job.type === 'regenerate' && job.replaced === vertexChatAnchor() && job.anchor === vertexChatAnchor(chat.length - 1);
 }
+function sameChat(job) {
+    if (job.target?.group) return String(selected_group) === String(JSON.parse(job.chat)[0]) && getCurrentChatId() === job.target.file && chat_metadata.integrity === job.target.integrity;
+    return job.chat === chatKey();
+}
+
+function autosavedTail(job) {
+    const last = chat.at(-1);
+    return last?.extra?.linpeak_job === job.id && last.extra.linpeak_autosaved && chat_metadata.linpeak_revision === job.id
+        && job.anchor === vertexChatAnchor(chat.length - 1);
+}
+
 function matches(job) {
-    return job.chat === chatKey() && (job.anchor === vertexChatAnchor() || hasOriginalRegeneratedReply(job));
+    return sameChat(job) && (job.anchor === vertexChatAnchor() || hasOriginalRegeneratedReply(job) || autosavedTail(job));
+}
+
+export function acceptSavedRevision(job) {
+    if (job?.saved && sameChat(job)) chat_metadata.linpeak_revision = job.id;
+}
+
+export function savedRevisionAcknowledged(job) {
+    return !job?.saved || (sameChat(job) && !!chat_metadata.linpeak_revision && chat_metadata.linpeak_revision !== job.id);
+}
+
+function makeTarget(job) {
+    const file = getCurrentChatId();
+    if (!file || !chat_metadata.integrity) return;
+    return { file, name: name2, avatar: characters[this_chid]?.avatar || '', group: !!selected_group,
+        groupGenerationId: group_generation_id, integrity: chat_metadata.integrity, revision: chat_metadata.linpeak_revision,
+        anchor: job.anchor, replaced: job.replaced, type: job.type || 'normal', source: job.source, model: job.model, showThoughts: job.showThoughts };
+}
+
+async function alreadyWritten(job) {
+    if (!job.target) return false;
+    if (sameChat(job) && chat.some(message => message.extra?.linpeak_job === job.id)) return true;
+    const res = await checked(await fetch(api + '/saved/' + encodeURIComponent(job.id), { ...post(job.target), signal: AbortSignal.timeout(15000) }));
+    return (await res.json()).saved;
+}
+
+async function showSaved(job, canFinishLater = false) {
+    update(job, canFinishLater ? 'stored' : 'saved');
+    status(t`Reply saved in the original chat.`);
+    // A suspended page may still show yesterday's pre-generation snapshot.
+    if (matches(job) && !chat.some(message => message.extra?.linpeak_job === job.id)) await reloadCurrentChat();
+    controls();
+    return savedChatReply;
 }
 
 function connectionKey() {
@@ -94,7 +139,7 @@ export function backgroundGenerationEnabled(type) {
 
 export function hasPendingVertexJob() {
     const job = pending();
-    return job && ['waiting', 'cancel', 'needs-tool', 'claimed'].includes(job.phase);
+    return job && ['waiting', 'cancel', 'needs-tool', 'claimed', 'conflict'].includes(job.phase);
 }
 
 function controls() {
@@ -109,8 +154,8 @@ function controls() {
         expiry.textContent = t`Temporary copy until ${time}`;
     }
     element('vertex_job_cancel').hidden = !(job?.phase === 'waiting' || job?.phase === 'cancel');
-    element('vertex_job_open').hidden = !!active || !job || ['cancel', 'expired'].includes(job.phase);
-    element('vertex_job_dismiss').hidden = !job || !['claimed', 'delivered', 'needs-tool', 'expired'].includes(job.phase);
+    element('vertex_job_open').hidden = !!active || !job || ['cancel', 'expired', 'saved', 'stored'].includes(job.phase);
+    element('vertex_job_dismiss').hidden = !job || !['claimed', 'delivered', 'needs-tool', 'expired', 'saved', 'stored', 'conflict'].includes(job.phase);
 }
 
 function url(job, suffix = '') { return api + '/' + encodeURIComponent(job.id) + suffix; }
@@ -280,12 +325,27 @@ async function receive(job) {
     let meta;
     for (;;) {
         await foreground(job);
-        meta = await readWhileConnected(async () => (await checked(await fetch(url(job), { cache: 'no-store', signal: AbortSignal.timeout(15000) }))).json(), job);
+        try {
+            meta = await readWhileConnected(async () => (await checked(await fetch(url(job), { cache: 'no-store', signal: AbortSignal.timeout(15000) }))).json(), job);
+        } catch (error) {
+            if (error.status === 404 && await readWhileConnected(() => alreadyWritten(job), job)) return showSaved(job);
+            throw error;
+        }
+        if (meta.state === 'conflict') {
+            update(job, 'conflict');
+            throw new Error(t`The reply was kept in a recovery copy. Open it to read the result.`);
+        }
+        job.saved = !!meta.saved;
+        if (job.saved && (!matches(job) || meta.state === 'claimed')) return showSaved(job, meta.state === 'ready');
         if (!document.hidden) {
             const seconds = Math.max(0, Math.floor((Date.now() - job.started) / 1000));
             element('vertex_job_time').textContent = Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
         }
-        if (meta.state === 'ready') { job.resultExpiresAt = meta.expiresAt; break; }
+        if (meta.state === 'ready') {
+            if (meta.saveFailed) toastr.warning(t`Could not write the reply to disk. Check available storage.`);
+            job.resultExpiresAt = meta.expiresAt;
+            break;
+        }
         if (meta.state === 'claimed') {
             update(job, 'claimed');
             throw new Error(t`This result has already been picked up. You can view it without running tools again.`);
@@ -311,6 +371,7 @@ async function receive(job) {
     if (calls.length) {
         const names = new Set(ToolManager.tools.map(tool => tool.toFunctionOpenAI().function.name));
         if (!job.canPerformToolCalls || calls.some(call => !names.has(call.function?.name))) {
+            if (job.saved) return showSaved(job);
             update(job, 'needs-tool');
             throw new Error(t`The required tool is unavailable. Open the saved reply to read its complete arguments.`);
         }
@@ -327,6 +388,11 @@ async function receive(job) {
     }
     update(job, 'claimed');
     if (!matches(job)) throw new Error(t`The chat changed. The saved result is available to view.`);
+    if (autosavedTail(job)) {
+        // Until the completed browser result is ready to save, stale writes must be rejected.
+        chat_metadata.linpeak_revision = job.target.revision;
+        await deleteLastMessage();
+    }
     data[delivery] = job;
     status(t`Applying the completed reply…`);
     return data;
@@ -338,14 +404,17 @@ export async function runVertexJob(payload, options, signal) {
     const job = { ...origin, source: payload.chat_completion_source || origin.source,
         model: payload.model || payload.models?.join(', ') || origin.model, textGenType: payload.api_type,
         stream: !!(payload.stream ?? payload.streaming), started: Date.now(), phase: 'waiting' };
+    job.target = makeTarget(job);
     const previous = pending();
-    if (previous?.phase === 'delivered' || previous?.phase === 'expired') {
+    if (['delivered', 'expired', 'saved', 'stored'].includes(previous?.phase)) {
         void fetch(url(previous), { method: 'DELETE', headers: getRequestHeaders() }).catch(() => {});
     }
     active = job;
     const cancel = () => { if (job.id && job.phase === 'waiting') void stop(job); };
     try {
-        const res = await checked(await fetch(api, { ...post({}), signal: AbortSignal.timeout(15000) }));
+        const res = await fetch(api, { ...post({ target: job.target }), signal: AbortSignal.timeout(15000) });
+        if (res.status === 409) throw new Error(t`The original chat changed before submission. Reopen it and send again.`);
+        await checked(res);
         job.id = (await res.json()).id;
         store(job);
         controls();
@@ -380,11 +449,16 @@ function handleError(job, error) {
 
 async function view(job) {
     const meta = await (await checked(await fetch(url(job), { cache: 'no-store', signal: AbortSignal.timeout(15000) }))).json();
-    if (!['claimed', 'ready'].includes(meta.state)) {
+    let data;
+    if (meta.state === 'conflict') {
+        const res = await checked(await fetch(url(job, '/result'), { cache: 'no-store', signal: AbortSignal.timeout(90000) }));
+        data = await res.json();
+    } else if (['claimed', 'ready'].includes(meta.state)) {
+        data = await result(job);
+    } else {
         status(t`The result is not ready yet.`);
         return;
     }
-    const data = await result(job);
     const field = document.createElement('textarea');
     field.readOnly = true;
     field.className = 'wide100p';
@@ -408,7 +482,7 @@ export function initVertexJobs(applyRecovered) {
     element('vertex_job_cancel').onclick = () => stop(active || pending());
     element('vertex_job_dismiss').onclick = () => {
         const job = pending();
-        if (!job || !['claimed', 'delivered', 'needs-tool', 'expired'].includes(job.phase)) return;
+        if (!job || !['claimed', 'delivered', 'needs-tool', 'expired', 'saved', 'stored', 'conflict'].includes(job.phase)) return;
         localStorage.removeItem(key());
         void fetch(url(job), { method: 'DELETE', headers: getRequestHeaders() }).catch(() => {});
         status('');
@@ -417,11 +491,17 @@ export function initVertexJobs(applyRecovered) {
     async function reconnect(manual = false) {
         wake?.();
         const job = pending();
-        if (job?.resultExpiresAt <= Date.now() && ['claimed', 'delivered', 'needs-tool'].includes(job.phase)) update(job, 'expired');
+        if (job?.resultExpiresAt <= Date.now() && ['claimed', 'delivered', 'needs-tool'].includes(job.phase)) update(job, job.saved ? 'saved' : 'expired');
         controls();
         if (!initialized || !job) return;
         if (job.phase === 'cancel') return stop(job);
         if (active) return;
+        if (job.phase === 'saved' || (job.phase === 'stored' && !sameChat(job))) { status(t`Reply saved in the original chat.`); return; }
+        if (job.phase === 'conflict') {
+            status(t`The reply was kept in a recovery copy. Open it to read the result.`);
+            if (manual) await view(job).catch(error => handleError(job, error));
+            return;
+        }
         if (job.phase === 'expired') {
             status(t`Task expired or Termux restarted.`);
             if (manual) { localStorage.removeItem(key()); controls(); }
@@ -437,6 +517,24 @@ export function initVertexJobs(applyRecovered) {
             return;
         }
         if (!matches(job)) {
+            if (job.target) {
+                const meta = await fetch(url(job), { cache: 'no-store', signal: AbortSignal.timeout(15000) })
+                    .then(res => res.ok ? res.json() : null).catch(() => null);
+                if (meta?.state === 'conflict') {
+                    update(job, 'conflict');
+                    status(t`The reply was kept in a recovery copy. Open it to read the result.`);
+                    controls();
+                    if (manual) await view(job).catch(error => handleError(job, error));
+                    return;
+                }
+                if (meta?.saved || (!meta && await alreadyWritten(job).catch(() => false))) {
+                    // A chat load can finish while its status request is in flight.
+                    if (active || pending()?.id !== job.id || !['waiting', 'stored'].includes(pending()?.phase)) return;
+                    if (meta?.state === 'ready' && matches(job)) { void reconnect(); return; }
+                    await showSaved(job, meta?.state === 'ready');
+                    return;
+                }
+            }
             status(t`Open the original chat to receive this reply.`);
             if (manual) await view(job).catch(error => handleError(job, error));
             return;
@@ -471,8 +569,8 @@ export function initVertexJobs(applyRecovered) {
 export function finishVertexDelivery(data) {
     const job = data?.[delivery];
     if (!job) return;
-    update(job, 'delivered');
-    status(t`Reply picked up. Saved copy available.`);
+    update(job, job.saved ? 'saved' : 'delivered');
+    status(job.saved ? t`Reply saved in the original chat.` : t`Reply picked up. Saved copy available.`);
     controls();
 }
 
