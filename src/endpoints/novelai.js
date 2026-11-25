@@ -164,7 +164,9 @@ router.post('/status', async function (req, res) {
     }
 });
 
-router.post('/generate', async function (req, res) {
+router.post('/generate', generateNovel);
+
+export async function generateNovel(req, res) {
     if (!req.body) return res.sendStatus(400);
 
     const api_key_novel = readSecret(req.user.directories, SECRET_KEYS.NOVEL);
@@ -295,7 +297,7 @@ router.post('/generate', async function (req, res) {
     } catch (error) {
         return res.send({ error: true });
     }
-});
+}
 
 router.post('/generate-image', async (request, response) => {
     if (!request.body) {

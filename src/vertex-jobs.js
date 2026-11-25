@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
+import { EventEmitter } from 'node:events';
+import { pipeline } from 'node:stream/promises';
 import express from 'express';
 import { createVertexStreamObserver } from './vertex-stream-observer.js';
 
@@ -8,7 +10,24 @@ const maxBytes = 16 * 1024 * 1024;
 const blockSize = 64 * 1024;
 
 // A real writable owns the provider connection even when every browser disconnects.
-class VertexJobResponse extends Writable {
+class JobConnection extends EventEmitter {
+    closed = false;
+
+    on(event, listener) {
+        if (event === 'close' && this.closed) { listener(); return this; }
+        return super.on(event, listener);
+    }
+
+    disconnect() {
+        this.closed = true;
+        this.emit('close');
+        this.removeAllListeners();
+    }
+}
+
+class GenerationJobResponse extends Writable {
+    socket = new JobConnection();
+
     statusCode = 200;
     contentType = 'application/json';
     bytes = 0;
@@ -33,6 +52,9 @@ class VertexJobResponse extends Writable {
         if (name.toLowerCase() === 'content-type') this.contentType = value;
     }
     send(value) { this.end(JSON.stringify(value)); }
+    json(value) { this.send(value); }
+    sendStatus(code) { this.status(code).send({ error: true }); }
+    async forwardBody(body) { await pipeline(body, this); }
 
     _write(chunk, encoding, callback) {
         if (this.bytes + chunk.length > maxBytes) return callback(new Error('Reply exceeded the 16 MiB recovery limit.'));
@@ -51,11 +73,12 @@ class VertexJobResponse extends Writable {
     }
 }
 
-export function createVertexJobsRouter(generate) {
+export function createGenerationJobsRouter(handlers) {
     const router = express.Router();
     const jobs = new Map();
     function expire(job, ms) {
         clearTimeout(job.timer);
+        job.expiresAt = Date.now() + ms;
         job.timer = setTimeout(() => {
             job.state = 'expired';
             job.sink?.destroy();
@@ -85,33 +108,41 @@ export function createVertexJobsRouter(generate) {
     router.post('/:id/start', (req, res) => {
         const job = res.locals.job;
         if (job.state !== 'reserved') return res.sendStatus(409);
-        if (req.body?.chat_completion_source !== 'vertexai' || req.body.reverse_proxy ||
-            !['express', 'full'].includes(req.body.vertexai_auth_mode || 'express')) return res.sendStatus(400);
-        const sink = new VertexJobResponse(req.body.stream);
+        const transport = req.query.transport ?? 'openai';
+        if (typeof transport !== 'string' || !Object.hasOwn(handlers, transport) || !req.body) return res.sendStatus(400);
+        const google = transport === 'openai' && ['vertexai', 'makersuite'].includes(req.body.chat_completion_source);
+        const sink = new GenerationJobResponse(google && req.body.stream);
+        // Provider handlers observe the lifetime of the job, independently of the control POST.
+        const request = Object.create(req, {
+            socket: { value: sink.socket },
+            generationJob: { value: true },
+        });
         job.sink = sink;
         job.state = 'running';
         expire(job, lifetime);
         sink.on('error', () => {}); // close handles both transport errors and explicit cancellation
         sink.once('close', () => {
+            if (!sink.writableFinished) sink.socket.disconnect();
+            else sink.socket.removeAllListeners();
             if (job.state !== 'running') return;
             job.state = sink.writableFinished ? 'ready' : 'failed';
             if (job.state === 'failed') sink.blocks = [];
             expire(job, lifetime);
         });
         res.sendStatus(202);
-        Promise.resolve(generate(req, sink)).catch(() => sink.destroy());
+        Promise.resolve(handlers[transport](request, sink)).catch(() => sink.destroy());
     });
     router.get('/:id', (_req, res) => {
         const job = res.locals.job;
         const stats = job.sink?.observer?.summary();
-        res.json({ state: job.state, bytes: job.sink?.bytes || 0,
+        res.json({ state: job.state, expiresAt: job.expiresAt, bytes: job.sink?.bytes || 0,
             thought: !!stats?.thoughtParts, tool: !!stats?.toolParts, text: !!stats?.textParts });
     });
     router.get('/:id/result', (_req, res) => {
         const job = res.locals.job;
         if (!['ready', 'claimed'].includes(job.state)) return res.sendStatus(409);
         const sink = job.sink;
-        res.status(sink.statusCode).type(sink.contentType).set('Content-Length', String(sink.bytes));
+        res.status(sink.statusCode).type(sink.contentType).set('X-Linpeak-Job-Result', '1').set('Content-Length', String(sink.bytes));
         let remaining = sink.bytes;
         for (const block of sink.blocks) {
             const size = Math.min(remaining, blockSize);

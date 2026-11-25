@@ -1,4 +1,4 @@
-import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import fetch from 'node-fetch';
 import express from 'express';
 import _ from 'lodash';
@@ -20,55 +20,31 @@ import { createHash } from 'node:crypto';
 export const router = express.Router();
 
 /**
- * Special boy's steaming routine. Wrap this abomination into proper SSE stream.
- * @param {import('node-fetch').Response} jsonStream JSON stream
- * @param {import('express').Request} request Express request
+ * Convert Ollama's newline-delimited JSON into the text completion SSE format.
+ * @param {import('node-fetch').Response} upstream JSON stream
  * @param {import('express').Response} response Express response
- * @returns {Promise<any>} Nothing valuable
+ * @returns {Promise<void>}
  */
-async function parseOllamaStream(jsonStream, request, response) {
-    try {
-        if (!jsonStream.body) {
-            throw new Error('No body in the response');
-        }
-
-        let partialData = '';
-        jsonStream.body.on('data', (data) => {
-            const chunk = data.toString();
-            partialData += chunk;
-            while (true) {
-                let json;
-                try {
-                    json = JSON.parse(partialData);
-                } catch (e) {
-                    break;
-                }
-                const text = json.response || '';
-                const thinking = json.thinking || '';
-                const chunk = { choices: [{ text, thinking }] };
-                response.write(`data: ${JSON.stringify(chunk)}\n\n`);
-                partialData = '';
-            }
-        });
-
-        request.socket.on('close', function () {
-            if (jsonStream.body instanceof Readable) jsonStream.body.destroy();
-            response.end();
-        });
-
-        jsonStream.body.on('end', () => {
-            console.info('Streaming request finished');
-            response.write('data: [DONE]\n\n');
-            response.end();
-        });
-    } catch (error) {
-        console.error('Error forwarding streaming response:', error);
-        if (!response.headersSent) {
-            return response.status(500).send({ error: true });
-        } else {
-            return response.end();
-        }
+async function parseOllamaStream(upstream, response) {
+    if (!upstream.ok || !upstream.body) return forwardFetchResponse(upstream, response);
+    response.setHeader('Content-Type', 'text/event-stream');
+    function frame(line) {
+        const value = JSON.parse(line);
+        if (value.error) throw new Error(String(value.error));
+        return 'data: ' + JSON.stringify({ choices: [{ text: value.response || '', thinking: value.thinking || '' }] }) + '\n\n';
     }
+    await pipeline(upstream.body.setEncoding('utf8'), async function* (chunks) {
+        let pending = '';
+        for await (const chunk of chunks) {
+            const lines = (pending + chunk).split('\n');
+            pending = lines.pop();
+            for (const line of lines) {
+                if (line.trim()) yield frame(line);
+            }
+        }
+        if (pending.trim()) yield frame(pending);
+        yield 'data: [DONE]\n\n';
+    }, response);
 }
 
 /**
@@ -269,7 +245,9 @@ router.post('/props', async function (request, response) {
     }
 });
 
-router.post('/generate', async function (request, response) {
+router.post('/generate', generateTextCompletion);
+
+export async function generateTextCompletion(request, response) {
     if (!request.body) return response.sendStatus(400);
 
     try {
@@ -400,7 +378,7 @@ router.post('/generate', async function (request, response) {
 
         if (request.body.api_type === TEXTGEN_TYPES.OLLAMA && request.body.stream) {
             const stream = await fetch(url, args);
-            parseOllamaStream(stream, request, response);
+            await parseOllamaStream(stream, response);
         } else if (request.body.stream) {
             const completionsStream = await fetch(url, args);
             // Pipe remote SSE stream to Express response
@@ -438,7 +416,7 @@ router.post('/generate', async function (request, response) {
             ? response.send(value)
             : response.end();
     }
-});
+}
 
 const ollama = express.Router();
 

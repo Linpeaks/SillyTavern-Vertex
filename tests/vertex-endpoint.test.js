@@ -9,7 +9,7 @@ import express from 'express';
 import fetch, { Response } from 'node-fetch';
 import { afterEach, beforeAll, expect, jest, test } from '@jest/globals';
 import * as constants from '../src/constants.js';
-import { createVertexJobsRouter } from '../src/vertex-jobs.js';
+import { createGenerationJobsRouter } from '../src/vertex-jobs.js';
 import * as geminiModels from '../public/scripts/gemini-models.js';
 import { fetchVertexHttp2, forwardVertexResponse } from '../src/vertex-http2.js';
 
@@ -86,7 +86,7 @@ async function fixture(onStream, { enabled = true, proxy = '', authType = 'full'
     app.use('/jobs', (req, res, next) => {
         req.user = { profile: { handle: req.headers['x-test-user'] || 'owner' }, directories: {} };
         next();
-    }, createVertexJobsRouter(context.sendMakerSuiteRequest));
+    }, createGenerationJobsRouter({ openai: context.sendMakerSuiteRequest }));
     app.post('/generate', async (req, res) => {
         req.user = { directories: {} };
         responses.push(res);

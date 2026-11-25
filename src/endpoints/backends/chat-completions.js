@@ -70,7 +70,11 @@ import { getVertexAIAuth, getProjectIdFromServiceAccount } from '../google.js';
 import { getCookieSecret } from '../../users.js';
 import { fetchGoogleModels, GoogleModelsHttpError } from './google-models.js';
 import { fetchVertexHttp2, forwardVertexResponse, getVertexHttp2Proxy } from '../../vertex-http2.js';
-import { createVertexJobsRouter } from '../../vertex-jobs.js';
+import { createGenerationJobsRouter } from '../../vertex-jobs.js';
+import { generateKobold } from './kobold.js';
+import { generateTextCompletion } from './text-completions.js';
+import { generateNovel } from '../novelai.js';
+import { generateHordeJob } from '../horde.js';
 import { validateNativePdfRequest, assertNativePdfReferences } from '../../../public/scripts/native-pdf.js';
 import { GEMINI_3_8_FLASH, VERTEX_FLEX_MAX_BYTES, VERTEX_FLEX_SIZE_ERROR, applyGoogleFlexTier, getGoogleFlexError, getVertexGeminiLocation, isGemini4Model, limitGeminiOutputTokens } from '../../../public/scripts/gemini-models.js';
 import { resolveNativePdfs } from '../../native-pdf.js';
@@ -2312,7 +2316,11 @@ router.post('/bias', async function (request, response) {
     }
 });
 
-router.use('/vertex-jobs', createVertexJobsRouter(generateChatCompletion));
+const generationJobs = createGenerationJobsRouter({
+    openai: generateChatCompletion, textgenerationwebui: generateTextCompletion,
+    kobold: generateKobold, novel: generateNovel, koboldhorde: generateHordeJob,
+});
+router.use(['/generation-jobs', '/vertex-jobs'], generationJobs);
 router.post('/generate', generateChatCompletion);
 
 async function generateChatCompletion(request, response) {

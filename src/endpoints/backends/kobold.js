@@ -8,7 +8,9 @@ import { TEXTGEN_TYPES } from '../../constants.js';
 
 export const router = express.Router();
 
-router.post('/generate', async function (request, response_generate) {
+router.post('/generate', generateKobold);
+
+export async function generateKobold(request, response_generate) {
     if (!request.body) return response_generate.sendStatus(400);
 
     if (request.body.api_server.indexOf('localhost') != -1) {
@@ -90,7 +92,7 @@ router.post('/generate', async function (request, response_generate) {
         signal: controller.signal,
     };
 
-    const MAX_RETRIES = 50;
+    const MAX_RETRIES = request.generationJob ? 1 : 50;
     const delayAmount = 2500;
     for (let i = 0; i < MAX_RETRIES; i++) {
         try {
@@ -125,7 +127,7 @@ router.post('/generate', async function (request, response_generate) {
                 case 403:
                 case 503: // retry in case of temporary service issue, possibly caused by a queue failure?
                     console.warn(`KoboldAI is busy. Retry attempt ${i + 1} of ${MAX_RETRIES}...`);
-                    await delay(delayAmount);
+                    if (i + 1 < MAX_RETRIES) await delay(delayAmount);
                     break;
                 default:
                     if ('status' in error) {
@@ -138,7 +140,7 @@ router.post('/generate', async function (request, response_generate) {
 
     console.error('Max retries exceeded. Giving up.');
     return response_generate.send({ error: true });
-});
+}
 
 router.post('/status', async function (request, response) {
     if (!request.body) return response.sendStatus(400);

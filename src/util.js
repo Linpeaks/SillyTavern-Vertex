@@ -762,6 +762,10 @@ export async function forwardFetchResponse(from, to) {
         return;
     }
 
+    if (from.body && to.forwardBody) {
+        to.setHeader('Content-Type', from.headers.get('content-type') || 'text/event-stream');
+        return to.forwardBody(from.body);
+    }
     if (from.body && to.socket) {
         from.body.pipe(to);
 
