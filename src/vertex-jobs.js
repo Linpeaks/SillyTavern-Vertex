@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import { prepareChatTarget, saveCompletedMessage, hasSavedMessage, recoveryFile, storeRecovery } from './generation-chat-storage.js';
+import { generationChatMessage } from './generation-chat-message.js';
 import { randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
 import { EventEmitter } from 'node:events';
@@ -94,14 +97,32 @@ export function createGenerationJobsRouter(handlers) {
     router.post('/', (req, res) => {
         const owner = req.user.profile.handle;
         if (jobs.size >= 12 || [...jobs.values()].filter(job => job.owner === owner).length >= 4) return res.sendStatus(429);
-        const job = { id: randomUUID(), owner, state: 'reserved', bytes: 0 };
+        let target;
+        if (req.body?.target) {
+            try {
+                target = prepareChatTarget(req.user.directories, req.body.target);
+            } catch {
+                return res.status(409).json({ error: 'original_chat_changed' });
+            }
+        }
+        const job = { id: randomUUID(), owner, target, state: 'reserved', bytes: 0 };
         jobs.set(job.id, job);
         expire(job, 60000);
         res.status(201).json({ id: job.id });
     });
+    router.post('/saved/:id', (req, res) => {
+        const saved = hasSavedMessage(req.user.directories, req.body, req.params.id);
+        return res.json({ saved });
+    });
     router.use('/:id', (req, res, next) => {
         const job = jobs.get(req.params.id);
-        if (!job || job.owner !== req.user.profile.handle) return res.sendStatus(404);
+        if (!job) {
+            const file = recoveryFile(req.user.directories, req.params.id);
+            if (!file || !fs.existsSync(file)) return res.sendStatus(404);
+            res.locals.job = { id: req.params.id, state: 'conflict', file };
+            return next();
+        }
+        if (job.owner !== req.user.profile.handle) return res.sendStatus(404);
         res.locals.job = job;
         next();
     });
@@ -121,12 +142,42 @@ export function createGenerationJobsRouter(handlers) {
         job.state = 'running';
         expire(job, lifetime);
         sink.on('error', () => {}); // close handles both transport errors and explicit cancellation
-        sink.once('close', () => {
+        const format = { id: job.id, started: sink.started, mainApi: transport, source: req.body.chat_completion_source || job.target?.source || req.body.api_type || transport,
+            model: req.body.model || req.body.models?.join(', ') || job.target?.model, stream: !!(req.body.stream ?? req.body.streaming),
+            textGenType: req.body.api_type, showThoughts: job.target?.showThoughts };
+        const user = req.user;
+        sink.once('close', async () => {
             if (!sink.writableFinished) sink.socket.disconnect();
             else sink.socket.removeAllListeners();
             if (job.state !== 'running') return;
             job.state = sink.writableFinished ? 'ready' : 'failed';
             if (job.state === 'failed') sink.blocks = [];
+            if (job.target && job.state === 'ready' && sink.statusCode >= 200 && sink.statusCode < 300) {
+                job.state = 'saving';
+                const body = Buffer.concat(sink.blocks, sink.bytes);
+                let copy;
+                try {
+                    copy = generationChatMessage(body, { ...job.target, ...format, finished: Date.now() });
+                    job.saved = await saveCompletedMessage(user, job.target, copy, () => job.state === 'saving');
+                } catch {
+                    // Preserve a completed but unrecognized wire format for inspection.
+                    copy ??= { api: format.source, model: format.model, raw: body.toString('utf8') };
+                }
+                if (job.state !== 'saving') return;
+                job.state = 'ready';
+                if (!job.saved) {
+                    try {
+                        storeRecovery(user.directories, job.id, copy);
+                        job.file = recoveryFile(user.directories, job.id);
+                        job.state = 'conflict';
+                        sink.blocks = [];
+                    } catch (error) {
+                        // A disk error still permits foreground delivery from the memory cache.
+                        job.saveFailed = true;
+                        console.warn('Background reply could not be written:', error.code || error.name);
+                    }
+                }
+            }
             expire(job, lifetime);
         });
         res.sendStatus(202);
@@ -135,11 +186,12 @@ export function createGenerationJobsRouter(handlers) {
     router.get('/:id', (_req, res) => {
         const job = res.locals.job;
         const stats = job.sink?.observer?.summary();
-        res.json({ state: job.state, expiresAt: job.expiresAt, bytes: job.sink?.bytes || 0,
+        res.json({ state: job.state, saved: !!job.saved, saveFailed: !!job.saveFailed, expiresAt: job.expiresAt, bytes: job.sink?.bytes || 0,
             thought: !!stats?.thoughtParts, tool: !!stats?.toolParts, text: !!stats?.textParts });
     });
     router.get('/:id/result', (_req, res) => {
         const job = res.locals.job;
+        if (job.state === 'conflict') return res.type('application/json').send(fs.readFileSync(job.file));
         if (!['ready', 'claimed'].includes(job.state)) return res.sendStatus(409);
         const sink = job.sink;
         res.status(sink.statusCode).type(sink.contentType).set('X-Linpeak-Job-Result', '1').set('Content-Length', String(sink.bytes));
@@ -164,6 +216,7 @@ export function createGenerationJobsRouter(handlers) {
         const job = res.locals.job;
         clearTimeout(job.timer);
         jobs.delete(job.id);
+        if (job.file) fs.rmSync(job.file, { force: true });
         job.state = 'removed';
         job.sink?.destroy();
         if (job.sink) job.sink.blocks = [];

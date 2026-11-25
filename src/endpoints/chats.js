@@ -328,27 +328,8 @@ function importRisuChat(userName, characterName, jsonData) {
     return chat.map(obj => JSON.stringify(obj)).join('\n');
 }
 
-/**
- * Checks if the chat being saved has the same integrity as the one being loaded.
- * @param {string} filePath Path to the chat file
- * @param {string} integritySlug Integrity slug
- * @returns {Promise<boolean>} Whether the chat is intact
- */
-async function checkChatIntegrity(filePath, integritySlug) {
-    // If the chat file doesn't exist, assume it's intact
-    if (!fs.existsSync(filePath)) {
-        return true;
-    }
-
-    // If the chat file is empty, there is nothing that could be lost by overwriting it
-    if (fs.statSync(filePath).size === 0) {
-        return true;
-    }
-
-    // Parse the first line of the chat file as JSON. Strip a UTF-8 BOM an external editor may have added.
-    const firstLine = await readFirstLine(filePath);
-    const jsonData = tryParse(String(firstLine ?? '').replace(/^\uFEFF/, ''));
-
+function checkChatIntegrity(filePath, integritySlug, jsonData) {
+    if (jsonData === undefined) return true;
     // If the first line of a non-empty file is not a JSON object, the file may be corrupted or truncated.
     // Fail the check so the client asks for an explicit overwrite confirmation instead of silently losing data.
     if (typeof jsonData !== 'object' || jsonData === null || Array.isArray(jsonData)) {
@@ -520,6 +501,26 @@ class IntegrityMismatchError extends Error {
     }
 }
 
+// Serialize validation and replacement, including writes from a completed generation.
+const chatWrites = new Map();
+export async function withChatWriteLock(filePath, operation) {
+    const key = path.resolve(filePath);
+    const previous = chatWrites.get(key) || Promise.resolve();
+    const current = previous.catch(() => {}).then(operation);
+    chatWrites.set(key, current);
+    try { return await current; } finally {
+        if (chatWrites.get(key) === current) chatWrites.delete(key);
+    }
+}
+
+export function writeChatFile(chatData, filePath, handle, cardName, backupDirectory) {
+    const jsonlData = chatData.map(m => JSON.stringify(m)).join('\n');
+    tryWriteFileSync(filePath, jsonlData);
+    getBackupFunction(handle, cardName)(backupDirectory, cardName, jsonlData);
+}
+
+class BackgroundRevisionMismatch extends Error {}
+
 /**
  * Tries to save the chat data to a file, performing an integrity check if required.
  * @param {Array} chatData The chat array to save.
@@ -530,16 +531,24 @@ class IntegrityMismatchError extends Error {
  * @param {string} backupDirectory Passed to backupChat.
  */
 export async function trySaveChat(chatData, filePath, skipIntegrityCheck = false, handle, cardName, backupDirectory) {
-    const jsonlData = chatData?.map(m => JSON.stringify(m)).join('\n');
-
-    const doIntegrityCheck = (checkIntegrity && !skipIntegrityCheck);
-    const chatIntegritySlug = doIntegrityCheck ? chatData?.[0]?.chat_metadata?.integrity : undefined;
-
-    if (chatIntegritySlug && !await checkChatIntegrity(filePath, chatIntegritySlug)) {
-        throw new IntegrityMismatchError(`Chat integrity check failed for "${filePath}". The expected integrity slug was "${chatIntegritySlug}".`);
-    }
-    tryWriteFileSync(filePath, jsonlData);
-    getBackupFunction(handle, cardName)(backupDirectory, cardName, jsonlData);
+    return withChatWriteLock(filePath, async () => {
+        const metadata = chatData?.[0]?.chat_metadata;
+        const existing = fs.existsSync(filePath) && fs.statSync(filePath).size > 0;
+        const header = existing ? tryParse(String(await readFirstLine(filePath)).replace(/^\uFEFF/, '')) ?? null : undefined;
+        const revision = header?.chat_metadata?.linpeak_revision;
+        if (revision && revision !== metadata?.linpeak_revision) throw new BackgroundRevisionMismatch();
+        if (checkIntegrity && !skipIntegrityCheck && metadata?.integrity && !checkChatIntegrity(filePath, metadata.integrity, header)) {
+            throw new IntegrityMismatchError('Chat integrity check failed for "' + filePath + '".');
+        }
+        // A tab which loaded the autosaved reply can edit it. Older snapshots cannot overwrite it.
+        const nextRevision = revision && (revision.startsWith('seen:') ? revision : 'seen:' + revision);
+        if (metadata) {
+            if (nextRevision) metadata.linpeak_revision = nextRevision;
+            else delete metadata.linpeak_revision;
+        }
+        writeChatFile(chatData, filePath, handle, cardName, backupDirectory);
+        return nextRevision;
+    });
 }
 
 router.post('/save', validateAvatarUrlMiddleware, async function (request, response) {
@@ -554,12 +563,13 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
         }
 
         if (Array.isArray(chatData)) {
-            await trySaveChat(chatData, chatFilePath, request.body.force, handle, cardName, request.user.directories.backups);
-            return response.send({ ok: true });
+            const revision = await trySaveChat(chatData, chatFilePath, request.body.force, handle, cardName, request.user.directories.backups);
+            return response.send({ ok: true, revision });
         } else {
             return response.status(400).send({ error: 'The request\'s body.chat is not an array.' });
         }
     } catch (error) {
+        if (error instanceof BackgroundRevisionMismatch) return response.status(409).send({ error: 'background_revision' });
         if (error instanceof IntegrityMismatchError) {
             console.error(error.message);
             return response.status(400).send({ error: 'integrity' });
@@ -933,12 +943,13 @@ router.post('/group/save', async function (request, response) {
         const chatData = request.body.chat;
 
         if (Array.isArray(chatData)) {
-            await trySaveChat(chatData, chatFilePath, request.body.force, handle, String(id), request.user.directories.backups);
-            return response.send({ ok: true });
+            const revision = await trySaveChat(chatData, chatFilePath, request.body.force, handle, String(id), request.user.directories.backups);
+            return response.send({ ok: true, revision });
         } else {
             return response.status(400).send({ error: 'The request\'s body.chat is not an array.' });
         }
     } catch (error) {
+        if (error instanceof BackgroundRevisionMismatch) return response.status(409).send({ error: 'background_revision' });
         if (error instanceof IntegrityMismatchError) {
             console.error(error.message);
             return response.status(400).send({ error: 'integrity' });
