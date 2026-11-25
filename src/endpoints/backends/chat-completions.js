@@ -70,6 +70,7 @@ import { getVertexAIAuth, getProjectIdFromServiceAccount } from '../google.js';
 import { getCookieSecret } from '../../users.js';
 import { fetchGoogleModels, GoogleModelsHttpError } from './google-models.js';
 import { fetchVertexHttp2, forwardVertexResponse, getVertexHttp2Proxy } from '../../vertex-http2.js';
+import { createVertexJobsRouter } from '../../vertex-jobs.js';
 import { validateNativePdfRequest, assertNativePdfReferences } from '../../../public/scripts/native-pdf.js';
 import { GEMINI_3_8_FLASH, VERTEX_FLEX_MAX_BYTES, VERTEX_FLEX_SIZE_ERROR, applyGoogleFlexTier, getGoogleFlexError, getVertexGeminiLocation, isGemini4Model, limitGeminiOutputTokens } from '../../../public/scripts/gemini-models.js';
 import { resolveNativePdfs } from '../../native-pdf.js';
@@ -782,6 +783,7 @@ async function sendMakerSuiteRequest(request, response) {
             ? await fetchVertexHttp2(url, fetchOptions, {
                 proxyUrl,
                 pingIntervalMs: Math.max(1000, getConfigValue('gemini.vertexHttp2.pingIntervalMs', 30000, 'number')),
+                onSseObserver: response.useStreamObserver?.bind(response),
                 observeSse: getConfigValue('gemini.vertexHttp2.observeSse', true, 'boolean'),
                 progressIntervalMs: getConfigValue('gemini.vertexHttp2.progressIntervalMs', 0, 'number') > 0
                     ? Math.max(60000, getConfigValue('gemini.vertexHttp2.progressIntervalMs', 0, 'number')) : 0,
@@ -2310,7 +2312,10 @@ router.post('/bias', async function (request, response) {
     }
 });
 
-router.post('/generate', async function (request, response) {
+router.use('/vertex-jobs', createVertexJobsRouter(generateChatCompletion));
+router.post('/generate', generateChatCompletion);
+
+async function generateChatCompletion(request, response) {
     try {
         if (!request.body) return response.status(400).send({ error: true });
 
@@ -2809,7 +2814,7 @@ router.post('/generate', async function (request, response) {
             response.end();
         }
     }
-});
+}
 
 const multimodalModels = express.Router();
 

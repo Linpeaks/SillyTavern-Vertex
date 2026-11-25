@@ -79,7 +79,8 @@ beforeAll(async () => {
         },
     });
     vm.runInContext(source.match(/^async function sendMakerSuiteRequest\([^]*?^}/m)[0], context);
-    vm.runInContext(source.match(/^router.post\('\/generate', async function[^]*?^}\);/m)[0], context);
+    vm.runInContext(source.match(/^async function generateChatCompletion\([^]*?^}/m)[0], context);
+    router.post('/generate', context.generateChatCompletion);
     vm.runInContext(uploadSource.match(/^router.post\('\/upload-pdf', async[^]*?^}\);/m)[0], context);
     const app = express();
     app.use(express.json({ limit: '70mb' }));

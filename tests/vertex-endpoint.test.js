@@ -9,6 +9,7 @@ import express from 'express';
 import fetch, { Response } from 'node-fetch';
 import { afterEach, beforeAll, expect, jest, test } from '@jest/globals';
 import * as constants from '../src/constants.js';
+import { createVertexJobsRouter } from '../src/vertex-jobs.js';
 import * as geminiModels from '../public/scripts/gemini-models.js';
 import { fetchVertexHttp2, forwardVertexResponse } from '../src/vertex-http2.js';
 
@@ -82,6 +83,10 @@ async function fixture(onStream, { enabled = true, proxy = '', authType = 'full'
     const responses = [];
     const app = express();
     app.use(express.json());
+    app.use('/jobs', (req, res, next) => {
+        req.user = { profile: { handle: req.headers['x-test-user'] || 'owner' }, directories: {} };
+        next();
+    }, createVertexJobsRouter(context.sendMakerSuiteRequest));
     app.post('/generate', async (req, res) => {
         req.user = { directories: {} };
         responses.push(res);
@@ -168,4 +173,58 @@ test.each([
     expect(f.h1).toHaveBeenCalledTimes(1);
     expect(f.h2).not.toHaveBeenCalled();
     expect(f.requests).toHaveLength(0);
+});
+
+test.each([true, false])('detached Vertex task survives a reader leaving (stream=%s)', async stream => {
+    let upstream;
+    const f = await fixture(s => { upstream = s; });
+    const api = f.url.replace('/generate', '/jobs');
+    const { id } = await (await fetch(api, { method: 'POST' })).json();
+    const job = api + '/' + id;
+    const payload = { chat_completion_source: 'vertexai', vertexai_auth_mode: 'full', model: 'gemini-4-carbon',
+        stream, messages: [{ role: 'user', content: 'synthetic prompt' }] };
+    const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    expect((await fetch(job + '/start', post(payload))).status).toBe(202);
+    expect((await fetch(job + '/start', post(payload))).status).toBe(409);
+    expect((await fetch(job, { headers: { 'x-test-user': 'other' } })).status).toBe(404);
+    await until(() => f.requests.length === 1);
+    const reply = { candidates: [{ content: { parts: [{ functionCall: { name: 'story', args: { body: '正文' } }, thoughtSignature: 'sig' }] }, finishReason: 'STOP' }] };
+    upstream.respond({ ':status': 200, 'content-type': stream ? 'text/event-stream' : 'application/json' });
+    const bytes = stream ? 'data: ' + JSON.stringify(reply) + '\r\n\r\n' : JSON.stringify(reply);
+    const buffer = Buffer.from(bytes);
+    const split = buffer.indexOf(Buffer.from('正文')) + 1;
+    upstream.write(buffer.subarray(0, split));
+    expect((await (await fetch(job)).json()).state).toBe('running');
+    upstream.end(buffer.subarray(split));
+    for (let n = 0; n < 50 && (await (await fetch(job)).json()).state === 'running'; n++) await delay(5);
+    const state = await (await fetch(job)).json();
+    expect(state.state).toBe('ready');
+    expect(state.tool).toBe(stream);
+    for (let n = 0; n < 2; n++) {
+        const saved = await (await fetch(job + '/result')).text();
+        expect(stream ? saved : JSON.parse(saved).responseContent.parts).toEqual(stream ? bytes : reply.candidates[0].content.parts);
+    }
+    const winner = '11111111-1111-4111-8111-111111111111';
+    expect((await fetch(job + '/claim', post({ consumer: winner }))).status).toBe(204);
+    expect((await fetch(job + '/claim', post({ consumer: winner }))).status).toBe(204);
+    expect((await fetch(job + '/claim', post({ consumer: '22222222-2222-4222-8222-222222222222' }))).status).toBe(409);
+    expect(f.requests).toHaveLength(1);
+    expect((await fetch(job, { method: 'DELETE' })).status).toBe(204);
+    expect((await fetch(job)).status).toBe(404);
+});
+
+test('stopping a detached job cancels the real upstream and cannot restart it', async () => {
+    const f = await fixture(() => {});
+    const api = f.url.replace('/generate', '/jobs');
+    const { id } = await (await fetch(api, { method: 'POST' })).json();
+    const job = api + '/' + id;
+    const options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        chat_completion_source: 'vertexai', vertexai_auth_mode: 'full', model: 'gemini-4-carbon', stream: true, messages: [{ role: 'user', content: 'test' }],
+    }) };
+    expect((await fetch(job + '/start', options)).status).toBe(202);
+    await until(() => f.requests.length === 1);
+    expect((await fetch(job, { method: 'DELETE' })).status).toBe(204);
+    await until(() => f.diagnostics.some(s => s.outcome === 'cancelled'));
+    expect((await fetch(job + '/start', options)).status).toBe(404);
+    expect(f.requests).toHaveLength(1);
 });

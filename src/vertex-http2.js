@@ -56,6 +56,7 @@ export async function getVertexHttp2Proxy(endpoint, agent = https.globalAgent) {
  * @param {number} [options.pingIntervalMs]
  * @param {number} [options.connectTimeoutMs]
  * @param {boolean} [options.observeSse] Collect bounded metadata for SSE responses
+ * @param {Function} [options.onSseObserver] Share the read-only progress observer with a detached receiver
  * @param {number} [options.progressIntervalMs] Optional progress log, zero disables
  * @param {string | Buffer} [options.ca] Additional trust for local TLS tests
  * @param {function(object): void} [options.onDiagnostic] Receives metadata only
@@ -66,6 +67,7 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
     pingIntervalMs = 30000,
     connectTimeoutMs = 30000,
     observeSse = true,
+    onSseObserver,
     progressIntervalMs = 0,
     ca,
     onDiagnostic = summary => console.info('[Vertex HTTP/2]', summary),
@@ -240,6 +242,7 @@ export function fetchVertexHttp2(endpoint, { body, headers, signal }, {
                             stats.status = Number(responseHeaders[':status']);
                             if (observeSse && stats.status === 200 && /^text\/event-stream\b/i.test(String(responseHeaders['content-type'] || ''))) {
                                 observer = createVertexStreamObserver();
+                                try { onSseObserver?.(observer); } catch { /* Diagnostics are optional. */ }
                             }
                             // We request identity encoding so raw SSE bytes remain intact.
                             const encoding = responseHeaders['content-encoding'];
