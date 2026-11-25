@@ -76,6 +76,7 @@ import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 import { renderTemplateAsync } from './templates.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
+import { runVertexJob } from './vertex-jobs.js';
 import { reviewRequestAttachments } from './composer-attachments.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { t, translate } from './i18n.js';
@@ -3166,7 +3167,7 @@ export async function createGenerationParameters(settings, model, type, messages
  * @returns {Promise<unknown>}
  * @throws {Error}
  */
-async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } = {}) {
+async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, background = null } = {}) {
     // Provide default abort signal
     if (!signal) {
         signal = new AbortController().signal;
@@ -3184,6 +3185,8 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     if (nativePdfRefs.length) generate_data.native_pdf_refs = nativePdfRefs.map(ref => ref.marker);
     validateNativePdfRequest(generate_data);
     await reviewRequestAttachments(type, generate_data, nativePdfRefs, signal);
+
+    if (background) return runVertexJob(generate_data, background, signal);
 
     const generate_url = '/api/backends/chat-completions/generate';
     const response = await fetch(generate_url, {

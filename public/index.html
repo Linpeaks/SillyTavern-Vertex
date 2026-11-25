@@ -8117,10 +8117,18 @@
                 <div id="dialogue_del_mes_cancel" data-i18n="Cancel" class="menu_button">Cancel</div>
             </div>
             <div id="send_form" class="no-connection">
+                <div id="vertex_job_bar" hidden>
+                    <span id="vertex_job_status" role="status"></span>
+                    <span id="vertex_job_time" hidden></span>
+                    <button id="vertex_job_dismiss" type="button" class="menu_button" data-i18n="Dismiss">Dismiss</button>
+                    <button id="vertex_job_open" type="button" class="menu_button" data-i18n="Open task">Open task</button>
+                    <button id="vertex_job_cancel" type="button" class="menu_button" data-i18n="Stop task">Stop task</button>
+                </div>
                 <details id="composer_attachments" class="displayNone">
                     <summary data-i18n="Request attachments">Request attachments</summary>
                     <div class="composer_attachment_body">
                         <span id="composer_model"></span>
+                        <label id="vertex_job_setting" class="checkbox_label"><input type="checkbox" id="vertex_job_enabled"><span data-i18n="Receive Vertex replies in the background">Receive Vertex replies in the background</span></label>
                         <label class="checkbox_label"><input type="checkbox" id="composer_turn_images"><span data-i18n="Only send this user turn's images">Only send this user turn's images</span></label>
                         <label class="checkbox_label"><input type="checkbox" id="composer_review_once"><span data-i18n="Review before the next request">Review before the next request</span></label>
                         <span id="composer_image_count"></span>

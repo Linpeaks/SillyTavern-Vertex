@@ -903,6 +903,19 @@ body .panelControlBar {
     backdrop-filter: blur(var(--SmartThemeBlurStrength));
 }
 
+#vertex_job_bar:not([hidden]) {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+    padding: 4px 10px;
+    font-size: 0.87em;
+}
+
+#vertex_job_bar button[hidden] { display: none; }
+#vertex_job_status { flex: 1; }
+
 #composer_attachments {
     width: 100%;
     padding: 3px 10px;

@@ -248,6 +248,7 @@ import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_set
 import { loader } from './scripts/action-loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { initTextGenModels } from './scripts/textgen-models.js';
+import { vertexChatAnchor, hasOriginalRegeneratedReply, backgroundVertexEnabled, hasPendingVertexJob, initVertexJobs, cancelVertexJob, finishVertexDelivery } from './scripts/vertex-jobs.js';
 import { applyTurnImageScope, takeDraftImageScope } from './scripts/composer-attachments.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
@@ -738,6 +739,21 @@ async function firstLoadInit() {
     reloadMarkdownProcessor();
     applyBrowserFixes();
     await getClientVersion();
+    initVertexJobs(async (job, receive) => {
+        if (is_send_press) return;
+        const data = await receive();
+        if (hasOriginalRegeneratedReply(job)) await deleteLastMessage();
+        generation_started = new Date(job.started);
+        abortController = new AbortController();
+        deactivateSendButtons();
+        is_send_press = true;
+        try {
+            await generationResultHandler({ type: job.type, originalType: job.type, continue_mag: '', followup: { depth: job.depth + 1, force_name2: job.force_name2 },
+                canPerformToolCalls: job.canPerformToolCalls && ToolManager.canPerformToolCalls(job.type) })(data);
+        } finally {
+            unblockGeneration(job.type);
+        }
+    });
     await initSecrets();
     await readSecretState();
     await initLocales();
@@ -1482,6 +1498,7 @@ export async function showMoreMessages(messagesToLoad = null) {
 export async function printMessages() {
     let startIndex = 0;
     let count = power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
+    if (isMobile() && count === 100) count = 30;
 
     if (chat.length > count) {
         startIndex = chat.length - count;
@@ -3898,8 +3915,20 @@ class StreamingProcessor {
         const isContinue = this.type == 'continue';
         this.stoppingStrings = getStoppingStrings(isImpersonate, isContinue, main_api);
 
+        const mobile = isMobile();
+        let paint = Promise.resolve();
+        let needsPaint = false;
+        const redraw = () => {
+            if (document.hidden || !needsPaint || this.isStopped) return;
+            needsPaint = false;
+            paint = paint.then(() => this.onProgressStreaming(this.messageId, this.continueMessage + this.result));
+            return paint;
+        };
+        const onVisible = () => { redraw()?.catch(error => console.error('Stream display update failed', error)); };
+        if (mobile) document.addEventListener('visibilitychange', onVisible);
         try {
-            const sw = new Stopwatch(1000 / power_user.streaming_fps);
+            const fps = mobile ? Math.min(15, power_user.streaming_fps) : power_user.streaming_fps;
+            const sw = new Stopwatch(1000 / fps);
             const timestamps = [];
             for await (const { text, swipes, logprobs, toolCalls, state } of this.generator()) {
                 const now = Date.now();
@@ -3922,8 +3951,14 @@ class StreamingProcessor {
                 this.images = state?.images ?? [];
                 this.reasoningSignature = state?.signature ?? null;
                 await eventSource.emit(event_types.STREAM_TOKEN_RECEIVED, text);
-                await sw.tick(async () => await this.onProgressStreaming(this.messageId, this.continueMessage + text));
+                if (mobile) {
+                    needsPaint = true;
+                    if (!document.hidden) await sw.tick(redraw);
+                } else {
+                    await sw.tick(() => this.onProgressStreaming(this.messageId, this.continueMessage + text));
+                }
             }
+            await paint;
             const seconds = (timestamps[timestamps.length - 1] - timestamps[0]) / 1000;
             console.warn(`Stream stats: ${timestamps.length} tokens, ${seconds.toFixed(2)} seconds, rate: ${Number(timestamps.length / seconds).toFixed(2)} TPS`);
         } catch (err) {
@@ -3933,6 +3968,8 @@ class StreamingProcessor {
                 this.onErrorStreaming();
             }
             return this.result;
+        } finally {
+            if (mobile) document.removeEventListener('visibilitychange', onVisible);
         }
 
         this.isFinished = true;
@@ -4317,6 +4354,10 @@ function removeLastMessage() {
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
 export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
+    if (!dryRun && type !== 'quiet' && main_api === 'openai' && oai_settings.chat_completion_source === 'vertexai' && hasPendingVertexJob()) {
+        toastr.info(t`Finish or stop the pending Vertex task first.`);
+        return;
+    }
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
@@ -5419,6 +5460,10 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         console.debug(`pushed prompt bits to itemizedPrompts array. Length is now: ${itemizedPrompts.length}`);
 
+        if (!jsonSchema && backgroundVertexEnabled(type)) {
+            const replaced = type === 'regenerate' && lastMessage && !lastMessage.is_user ? vertexChatAnchor(chat.length + 1, lastMessage) : undefined;
+            return sendGenerationRequest(type, generate_data, { background: { type: type || 'normal', canPerformToolCalls, depth, force_name2, replaced } });
+        }
         if (isStreamingEnabled() && type !== 'quiet') {
             continue_mag = promptReasoning.removePrefix(continue_mag);
             streamingProcessor = new StreamingProcessor(type, force_name2, generation_started, continue_mag, promptReasoning);
@@ -5487,15 +5532,36 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
     }
 
-    return finishGenerating().then(onSuccess, onError);
+    const followup = { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth: depth + 1 };
+    return finishGenerating().then(generationResultHandler({ type, originalType, isImpersonate, isContinue, continue_mag,
+        promptReasoning, canPerformToolCalls, quietToLoud, jsonSchema, followup })).catch(onError);
 
+    /**
+     * Exception handler for finishGenerating
+     * @param {Error|object} exception Error or response JSON
+     * @throws {Error|object} Re-throws the exception
+     */
+    function onError(exception) {
+        // if the response JSON was thrown (novel|textgenerationwebui|kobold), show the error message
+        if (typeof exception?.error?.message === 'string') {
+            toastr.error(exception.error.message, t`Text generation error`, { timeOut: 10000, extendedTimeOut: 20000 });
+        }
+
+        unblockGeneration(type);
+        console.log(exception);
+        streamingProcessor = null;
+        throw exception;
+    }
+}
+
+function generationResultHandler({ type, originalType, isImpersonate, isContinue, continue_mag, promptReasoning, canPerformToolCalls, quietToLoud, jsonSchema, followup }) {
     /**
      * Handles the successful response from the generation API.
      * @param data
      * @returns {Promise<String|{fromStream}|*|string|string|void|Awaited<*>|undefined>}
      * @throws {Error} Throws an error if the response data contains an error message
      */
-    async function onSuccess(data) {
+    return async function onSuccess(data) {
         if (!data) return;
 
         if (data?.fromStream) {
@@ -5586,13 +5652,14 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                     if (Array.isArray(invocationResult.errors) && invocationResult.errors.length) {
                         ToolManager.showToolCallError(invocationResult.errors);
                     }
+                    finishVertexDelivery(data);
                     unblockGeneration(type);
                     return;
                 }
 
-                depth = depth + 1;
                 await ToolManager.saveFunctionToolInvocations(invocationResult.invocations);
-                return Generate('normal', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, depth }, dryRun);
+                finishVertexDelivery(data);
+                return Generate('normal', followup);
             }
         }
 
@@ -5603,11 +5670,13 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         const isAborted = abortController && abortController.signal.aborted;
         if (!isAborted && power_user.auto_swipe && generatedTextFiltered(getMessage)) {
             is_send_press = false;
+            finishVertexDelivery(data);
             return await swipe(null, SWIPE_DIRECTION.RIGHT, { source: SWIPE_SOURCE.AUTO_SWIPE, repeated: true, forceMesId: chat.length - 1 });
         }
 
         console.debug('/api/chats/save called by /Generate');
         await saveChatConditional();
+        finishVertexDelivery(data);
         unblockGeneration(type);
         streamingProcessor = null;
 
@@ -5617,31 +5686,16 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         // Don't break the API chain that expects a single string in return
         return Object.defineProperty(new String(getMessage), 'messageChunk', { value: messageChunk });
-    }
-
-    /**
-     * Exception handler for finishGenerating
-     * @param {Error|object} exception Error or response JSON
-     * @throws {Error|object} Re-throws the exception
-     */
-    function onError(exception) {
-        // if the response JSON was thrown (novel|textgenerationwebui|kobold), show the error message
-        if (typeof exception?.error?.message === 'string') {
-            toastr.error(exception.error.message, t`Text generation error`, { timeOut: 10000, extendedTimeOut: 20000 });
-        }
-
-        unblockGeneration(type);
-        console.log(exception);
-        streamingProcessor = null;
-        throw exception;
-    }
+    };
 }
+
 //MARK: Generate() ends
 
 /**
  * Stops the generation and any streaming if it is currently running.
  */
 export function stopGeneration() {
+    cancelVertexJob();
     let stopped = false;
     if (streamingProcessor) {
         streamingProcessor.onStopStreaming();
