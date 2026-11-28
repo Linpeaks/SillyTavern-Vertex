@@ -108,7 +108,7 @@ export function createGenerationJobsRouter(handlers) {
         const job = { id: randomUUID(), owner, target, state: 'reserved', bytes: 0 };
         jobs.set(job.id, job);
         expire(job, 60000);
-        res.status(201).json({ id: job.id });
+        res.status(201).json({ id: job.id, chatCompletionStart: true });
     });
     router.post('/saved/:id', (req, res) => {
         const saved = hasSavedMessage(req.user.directories, req.body, req.params.id);
@@ -126,10 +126,8 @@ export function createGenerationJobsRouter(handlers) {
         res.locals.job = job;
         next();
     });
-    router.post('/:id/start', (req, res) => {
-        const job = res.locals.job;
+    function start(req, res, job, transport) {
         if (job.state !== 'reserved') return res.sendStatus(409);
-        const transport = req.query.transport ?? 'openai';
         if (typeof transport !== 'string' || !Object.hasOwn(handlers, transport) || !req.body) return res.sendStatus(400);
         const google = transport === 'openai' && ['vertexai', 'makersuite'].includes(req.body.chat_completion_source);
         const sink = new GenerationJobResponse(google && req.body.stream);
@@ -180,14 +178,27 @@ export function createGenerationJobsRouter(handlers) {
             }
             expire(job, lifetime);
         });
+        if (transport === 'openai') job.format = { source: format.source, model: format.model, stream: format.stream };
         res.sendStatus(202);
         Promise.resolve(handlers[transport](request, sink)).catch(() => sink.destroy());
-    });
+    }
+    router.post('/:id/start', (req, res) => start(req, res, res.locals.job, req.query.transport ?? 'openai'));
+
+    // Presets can wrap the normal generation URL. Select the detached response sink
+    // only after those wrappers have submitted their final request to the server.
+    function startChatCompletion(req, res, next) {
+        if (!Object.hasOwn(req.query, 'backgroundJob')) return next();
+        res.set('Cache-Control', 'no-store');
+        if (!req.user?.profile?.handle) return res.sendStatus(403);
+        const job = jobs.get(req.query.backgroundJob);
+        if (!job || job.owner !== req.user.profile.handle) return res.sendStatus(404);
+        return start(req, res, job, 'openai');
+    }
     router.get('/:id', (_req, res) => {
         const job = res.locals.job;
         const stats = job.sink?.observer?.summary();
         res.json({ state: job.state, saved: !!job.saved, saveFailed: !!job.saveFailed, expiresAt: job.expiresAt, bytes: job.sink?.bytes || 0,
-            thought: !!stats?.thoughtParts, tool: !!stats?.toolParts, text: !!stats?.textParts });
+            ...job.format, thought: !!stats?.thoughtParts, tool: !!stats?.toolParts, text: !!stats?.textParts });
     });
     router.get('/:id/result', (_req, res) => {
         const job = res.locals.job;
@@ -222,5 +233,5 @@ export function createGenerationJobsRouter(handlers) {
         if (job.sink) job.sink.blocks = [];
         res.sendStatus(204);
     });
-    return router;
+    return { router, startChatCompletion };
 }

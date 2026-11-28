@@ -2,7 +2,7 @@ import { chat, chat_metadata, characters, name2, deleteLastMessage, reloadCurren
 import { chatAnchor } from './util/chat-anchor.js';
 import { horde_settings } from './horde.js';
 import { selected_group, group_generation_id } from './group-chats.js';
-import { getStreamingReply, oai_settings } from './openai.js';
+import { chatCompletionStream, getStreamingReply, oai_settings } from './openai.js';
 import { resolveSecretKey, secret_state } from './secrets.js';
 import { getTextGenServer } from './textgen-settings.js';
 import { getCurrentUserHandle } from './user.js';
@@ -15,6 +15,7 @@ import { t } from './i18n.js';
 import EventSourceStream from './sse-stream.js';
 
 const api = '/api/backends/chat-completions/generation-jobs';
+export const chatCompletionGenerateUrl = '/api/backends/chat-completions/generate';
 const key = () => 'linpeak.vertex.job.' + getCurrentUserHandle();
 const preference = () => key() + '.enabled';
 const delivery = Symbol('generation job');
@@ -304,14 +305,58 @@ async function decodeResult(response, bytes, job) {
     return { choices: [{ message: { content } }], responseContent: { parts } };
 }
 
-async function result(job) {
+function outputPresetKey() {
+    const settings = oai_settings.extensions?.SPreset?.OutputPreprocessing;
+    return settings?.enabled ? getStringHash(JSON.stringify([oai_settings.preset_settings_openai, settings])) : null;
+}
+
+// A detached stream has no live StreamingProcessor for SPreset to wrap. Replay the
+// complete frames through the installed preset's own formatter before dispatching tools.
+async function applyOutputPreset(data, bytes, job) {
+    if (job.outputPreset == null || job.outputPreset !== outputPresetKey() || !isOriginalConnection(job)) return data;
+    const preset = globalThis;
+    const settings = preset.normalizeSPresetOutputPreprocessing?.(oai_settings.extensions.SPreset.OutputPreprocessing);
+    if (!settings?.enabled || !preset.validateSPresetOutputPreprocessing?.(settings.script)?.valid) return data;
+    if (!job.stream) {
+        return settings.consumeToolCalls ? await preset.consumeSPresetToolCallsFromResponse?.(data, settings) || data : data;
+    }
+    if (!preset.wrapSPresetOutputGenerator || !Array.isArray(data.choices)) return data;
+    const packets = chatCompletionStream(new Response(bytes), new EventSourceStream(), data.choices.length > 1);
+    let last;
+    for await (const packet of preset.wrapSPresetOutputGenerator(packets, settings)()) last = packet;
+    if (!last) return data;
+    const originalText = data.choices[0]?.message?.content;
+    const consumed = settings.consumeToolCalls && !last.toolCalls?.length;
+    for (const [index, choice] of data.choices.entries()) {
+        choice.message.content = index ? last.swipes?.[index - 1] ?? choice.message.content : last.text;
+        if (consumed) delete choice.message.tool_calls;
+    }
+    if (data.responseContent?.parts) {
+        const parts = data.responseContent.parts.filter(part => !(consumed && part.functionCall));
+        if (originalText === last.text) data.responseContent.parts = parts;
+        else {
+            data.responseContent.parts = parts.filter(part => part.thought || typeof part.text !== 'string');
+            if (last.text) data.responseContent.parts.push({ text: last.text });
+        }
+    }
+    data[streamDetails] = last.state ?? data[streamDetails];
+    return data;
+}
+
+async function result(job, forDelivery = false) {
     // Buffer a complete download before decoding or claiming it. A lost GET has no side effects.
     const { res, bytes } = await readWhileConnected(async () => {
         const res = await fetch(url(job, '/result'), { cache: 'no-store', signal: AbortSignal.timeout(90000) });
         if (!res.ok && !res.headers.has('X-Linpeak-Job-Result')) await checked(res);
         return { res, bytes: await res.arrayBuffer() };
     }, job);
-    return decodeResult(res, bytes, job);
+    const data = await decodeResult(res, bytes, job);
+    if (forDelivery && matches(job)) {
+        try { return await applyOutputPreset(data, bytes, job); } catch (error) {
+            console.warn('Background output preset failed:', error.name);
+        }
+    }
+    return data;
 }
 
 async function foreground(job) {
@@ -342,6 +387,11 @@ async function receive(job) {
             element('vertex_job_time').textContent = Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
         }
         if (meta.state === 'ready') {
+            if (job.mainApi === 'openai' && typeof meta.stream === 'boolean') {
+                job.stream = meta.stream;
+                job.source = meta.source || job.source;
+                job.model = meta.model || job.model;
+            }
             if (meta.saveFailed) toastr.warning(t`Could not write the reply to disk. Check available storage.`);
             job.resultExpiresAt = meta.expiresAt;
             break;
@@ -359,7 +409,7 @@ async function receive(job) {
         await pause(1000);
     }
     let data;
-    try { data = await result(job); } catch (error) {
+    try { data = await result(job, true); } catch (error) {
         if (error.name !== 'AbortError') update(job, 'expired');
         throw error;
     }
@@ -401,7 +451,7 @@ async function receive(job) {
 export async function runVertexJob(payload, options, signal) {
     if (active || hasPendingVertexJob()) throw new Error(t`A generation task is already pending.`);
     const origin = options.mainApi ? options : { ...captureGenerationOrigin(), ...options };
-    const job = { ...origin, source: payload.chat_completion_source || origin.source,
+    const job = { ...origin, outputPreset: origin.mainApi === 'openai' ? outputPresetKey() : null, source: payload.chat_completion_source || origin.source,
         model: payload.model || payload.models?.join(', ') || origin.model, textGenType: payload.api_type,
         stream: !!(payload.stream ?? payload.streaming), started: Date.now(), phase: 'waiting' };
     job.target = makeTarget(job);
@@ -415,7 +465,8 @@ export async function runVertexJob(payload, options, signal) {
         const res = await fetch(api, { ...post({ target: job.target }), signal: AbortSignal.timeout(15000) });
         if (res.status === 409) throw new Error(t`The original chat changed before submission. Reopen it and send again.`);
         await checked(res);
-        job.id = (await res.json()).id;
+        const reservation = await res.json();
+        job.id = reservation.id;
         store(job);
         controls();
         signal.addEventListener('abort', cancel, { once: true });
@@ -423,7 +474,10 @@ export async function runVertexJob(payload, options, signal) {
         if (!matches(job)) { await stop(job); throw new Error(t`The chat changed.`); }
         status(t`Submitting the generation…`);
         try {
-            await checked(await fetch(url(job, '/start') + (job.mainApi === 'openai' ? '' : '?transport=' + encodeURIComponent(job.mainApi)), { ...post(payload), signal: AbortSignal.timeout(120000) }));
+            let startUrl = url(job, '/start');
+            if (job.mainApi !== 'openai') startUrl += '?transport=' + encodeURIComponent(job.mainApi);
+            else if (reservation.chatCompletionStart) startUrl = chatCompletionGenerateUrl + '?backgroundJob=' + encodeURIComponent(job.id);
+            await checked(await fetch(startUrl, { ...post(payload), signal: AbortSignal.timeout(120000) }));
         } catch (err) {
             if (!(err instanceof TypeError) && err.name !== 'TimeoutError') throw err;
         }

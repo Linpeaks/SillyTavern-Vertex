@@ -137,6 +137,7 @@ test.each(signedToolModels)('%s round-trips a PDF, image and complete signed str
     };
     const context = vm.createContext({
         ...references, ...media, ...geminiModels, oai_settings: settings, chat_completion_sources: constants.CHAT_COMPLETION_SOURCES,
+        chatCompletionGenerateUrl: '/api/backends/chat-completions/generate',
         main_api: 'openai', model_list: [], custom_prompt_post_processing_types: converters.PROMPT_PROCESSING_TYPE,
         TextDecoderStream, TransformStream, MessageEvent, AbortController, structuredClone,
         IGNORE_SYMBOL: Symbol('ignore'), system_message_types: { NARRATOR: 'narrator' }, character_names_behavior: { NONE: 'none' },
@@ -165,6 +166,7 @@ test.each(signedToolModels)('%s round-trips a PDF, image and complete signed str
         toolCalling.replace(/^import [^\n]*\n/gm, '').replace('export class ToolManager', 'class ToolManager'),
         openai.match(/^export function getStreamingReply\([^]*?^}/m)[0].replace('export ', ''),
         openai.match(/^async function sendOpenAIRequest\([^]*?^}/m)[0],
+        openai.match(/^export function chatCompletionStream\([^]*?^}/m)[0].replace('export ', ''),
         openai.match(/^function setOpenAIMessages\([^]*?^}/m)[0],
         `class Message { role = 'assistant'; ${openai.match(/^ {4}async setToolCalls\([^]*?^ {4}}/m)[0]} }`,
     ].join('\n'), context);

@@ -26,7 +26,7 @@ beforeAll(async () => {
     const app = express();
     app.use(express.json(), (req, res, next) => { req.user = { profile: { handle: 'test' }, directories: {} }; next(); });
     app.use('/jobs', createGenerationJobsRouter({ novel: generateNovel, koboldhorde: generateHordeJob, textgenerationwebui: generateTextCompletion, kobold: generateKobold,
-        openai: async (_req, res) => { await new Promise(resolve => { complete = resolve; }); res.send({ text: 'complete' }); } }));
+        openai: async (_req, res) => { await new Promise(resolve => { complete = resolve; }); res.send({ text: 'complete' }); } }).router);
     server = http.createServer(app);
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');

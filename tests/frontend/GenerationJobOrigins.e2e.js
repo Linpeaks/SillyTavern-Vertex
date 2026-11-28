@@ -163,6 +163,11 @@ for (const source of ['vertexai', 'makersuite', 'claude']) {
         let release;
         let sends = 0;
         const provider = http.createServer((req, res) => {
+            // A connection switch can also refresh the model list on this mock.
+            if (req.method === 'GET' && req.url.split('?')[0].endsWith('/models')) {
+                res.writeHead(200, { 'content-type': 'application/json' });
+                return res.end(JSON.stringify({ models: [] }));
+            }
             req.resume();
             req.on('end', () => {
                 sends++;

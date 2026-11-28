@@ -2320,8 +2320,8 @@ const generationJobs = createGenerationJobsRouter({
     openai: generateChatCompletion, textgenerationwebui: generateTextCompletion,
     kobold: generateKobold, novel: generateNovel, koboldhorde: generateHordeJob,
 });
-router.use(['/generation-jobs', '/vertex-jobs'], generationJobs);
-router.post('/generate', generateChatCompletion);
+router.use(['/generation-jobs', '/vertex-jobs'], generationJobs.router);
+router.post('/generate', generationJobs.startChatCompletion, generateChatCompletion);
 
 async function generateChatCompletion(request, response) {
     try {

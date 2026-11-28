@@ -28,7 +28,7 @@ async function boot() {
         requests++;
         await new Promise(resolve => { finish = resolve; });
         res.send({ choices: [{ message: { content: 'completed while closed' } }] });
-    } }));
+    } }).router);
     server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     url = 'http://127.0.0.1:' + server.address().port;

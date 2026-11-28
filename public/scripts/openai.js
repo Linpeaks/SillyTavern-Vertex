@@ -76,7 +76,7 @@ import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 import { renderTemplateAsync } from './templates.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
-import { runVertexJob } from './vertex-jobs.js';
+import { chatCompletionGenerateUrl, runVertexJob } from './vertex-jobs.js';
 import { reviewRequestAttachments } from './composer-attachments.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { t, translate } from './i18n.js';
@@ -3188,8 +3188,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ba
 
     if (background) return runVertexJob(generate_data, background, signal);
 
-    const generate_url = '/api/backends/chat-completions/generate';
-    const response = await fetch(generate_url, {
+    const response = await fetch(chatCompletionGenerateUrl, {
         method: 'POST',
         body: JSON.stringify(generate_data),
         headers: getRequestHeaders(),
@@ -3201,35 +3200,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ba
         throw new Error(`Got response status ${response.status}`);
     }
     if (stream) {
-        const eventStream = getEventSourceStream();
-        response.body.pipeThrough(eventStream);
-        const reader = eventStream.readable.getReader();
-        return async function* streamData() {
-            let text = '';
-            const swipes = [];
-            const toolCalls = [];
-            const state = { reasoning: '', images: [], signature: '', toolSignatures: {} };
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) return;
-                const rawData = value.data;
-                if (rawData === '[DONE]') return;
-                tryParseStreamingError(response, rawData);
-                const parsed = JSON.parse(rawData);
-
-                if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
-                    const swipeIndex = parsed.choices[0].index - 1;
-                    // FIXME: state.reasoning should be an array to support multi-swipe
-                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { overrideShowThoughts: false });
-                } else {
-                    text += getStreamingReply(parsed, state);
-                }
-
-                ToolManager.parseToolCalls(toolCalls, parsed, state.toolSignatures);
-
-                yield { text, swipes: swipes, logprobs: parseChatCompletionLogprobs(parsed), toolCalls: toolCalls, state: state };
-            }
-        };
+        return chatCompletionStream(response, getEventSourceStream(), canMultiSwipe);
     } else {
         const data = await response.json();
 
@@ -3251,6 +3222,38 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, ba
 
         return data;
     }
+}
+
+/** Decode a live or buffered provider stream into the same cumulative packets. */
+export function chatCompletionStream(response, eventStream, canMultiSwipe) {
+    response.body.pipeThrough(eventStream);
+    const reader = eventStream.readable.getReader();
+    return async function* streamData() {
+        let text = '';
+        const swipes = [];
+        const toolCalls = [];
+        const state = { reasoning: '', images: [], signature: '', toolSignatures: {} };
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) return;
+            const rawData = value.data;
+            if (rawData === '[DONE]') return;
+            tryParseStreamingError(response, rawData);
+            const parsed = JSON.parse(rawData);
+
+            if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
+                const swipeIndex = parsed.choices[0].index - 1;
+                // FIXME: state.reasoning should be an array to support multi-swipe
+                swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { overrideShowThoughts: false });
+            } else {
+                text += getStreamingReply(parsed, state);
+            }
+
+            ToolManager.parseToolCalls(toolCalls, parsed, state.toolSignatures);
+
+            yield { text, swipes: swipes, logprobs: parseChatCompletionLogprobs(parsed), toolCalls: toolCalls, state: state };
+        }
+    };
 }
 
 /**

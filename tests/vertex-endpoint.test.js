@@ -83,11 +83,13 @@ async function fixture(onStream, { enabled = true, proxy = '', authType = 'full'
     const responses = [];
     const app = express();
     app.use(express.json());
-    app.use('/jobs', (req, res, next) => {
+    const jobs = createGenerationJobsRouter({ openai: context.sendMakerSuiteRequest });
+    app.use((req, res, next) => {
         req.user = { profile: { handle: req.headers['x-test-user'] || 'owner' }, directories: {} };
         next();
-    }, createGenerationJobsRouter({ openai: context.sendMakerSuiteRequest }));
-    app.post('/generate', async (req, res) => {
+    });
+    app.use('/jobs', jobs.router);
+    app.post('/generate', jobs.startChatCompletion, async (req, res) => {
         req.user = { directories: {} };
         responses.push(res);
         await context.sendMakerSuiteRequest(req, res);
@@ -184,7 +186,13 @@ test.each([true, false])('detached Vertex task survives a reader leaving (stream
     const payload = { chat_completion_source: 'vertexai', vertexai_auth_mode: 'full', model: 'gemini-4-carbon',
         stream, messages: [{ role: 'user', content: 'synthetic prompt' }] };
     const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    expect((await fetch(job + '/start', post(payload))).status).toBe(202);
+    const start = f.url + '?backgroundJob=' + id;
+    const foreign = post(payload);
+    foreign.headers['x-test-user'] = 'other';
+    expect((await fetch(start, foreign)).status).toBe(404);
+    expect((await fetch(f.url + '?backgroundJob=missing', post(payload))).status).toBe(404);
+    expect((await fetch(start, post(payload))).status).toBe(202);
+    expect((await fetch(start, post(payload))).status).toBe(409);
     expect((await fetch(job + '/start', post(payload))).status).toBe(409);
     expect((await fetch(job, { headers: { 'x-test-user': 'other' } })).status).toBe(404);
     await until(() => f.requests.length === 1);

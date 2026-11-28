@@ -1,6 +1,49 @@
 import { test, expect } from '@playwright/test';
 import { testSetup } from './frontent-test-utils.js';
 
+test('background preset consumes a completed streamed tool before tool execution', async ({ page }) => {
+    const parts = [{ functionCall: { name: 'format_only', args: { body: 'synthetic prose' } } }];
+    let starts = 0;
+    let claims = 0;
+    await page.route(/\/chat-completions\/(?:generation-jobs|generate\?backgroundJob=)/, route => {
+        const path = new URL(route.request().url()).pathname;
+        if (path.endsWith('/generation-jobs')) return route.fulfill({ status: 201, json: { id: 'preset-test', chatCompletionStart: true } });
+        if (path.endsWith('/generate')) { starts++; return route.fulfill({ status: 202 }); }
+        if (path.endsWith('/result')) {
+            const frame = { candidates: [{ content: { parts }, finishReason: 'STOP' }] };
+            return route.fulfill({ contentType: 'text/event-stream', body: 'data: ' + JSON.stringify(frame) + '\n\n' });
+        }
+        if (path.endsWith('/claim')) { claims++; return route.fulfill({ status: 204 }); }
+        return route.fulfill({ json: { state: 'ready', stream: true, source: 'vertexai', model: 'gemini-4-carbon' } });
+    });
+    await testSetup.awaitST({ page });
+    await page.waitForFunction(async () => {
+        const { eventSource, event_types } = await import('./scripts/events.js');
+        return eventSource.autoFireLastArgs.has(event_types.APP_READY);
+    });
+    const result = await page.evaluate(async () => {
+        const core = await import('./script.js');
+        const { oai_settings, sendOpenAIRequest } = await import('./scripts/openai.js');
+        await core.newAssistantChat({ temporary: true });
+        core.changeMainAPI('openai');
+        Object.assign(oai_settings, { chat_completion_source: 'vertexai', vertexai_model: 'gemini-4-carbon', vertexai_auth_mode: 'express',
+            reverse_proxy: '', stream_openai: true, function_calling: true, extensions: { SPreset: { OutputPreprocessing: { enabled: true, consumeToolCalls: true, script: 'test' } } } });
+        window.normalizeSPresetOutputPreprocessing = settings => settings;
+        window.validateSPresetOutputPreprocessing = () => ({ valid: true });
+        window.wrapSPresetOutputGenerator = generator => async function* () {
+            for await (const packet of generator()) {
+                if (!packet.toolCalls.length) throw new Error('Original tool packet missing');
+                yield { ...packet, text: 'formatted synthetic prose', toolCalls: [] };
+            }
+        };
+        const reply = await sendOpenAIRequest('normal', [{ role: 'user', content: 'test' }], new AbortController().signal,
+            { background: { type: 'normal', canPerformToolCalls: true } });
+        return [reply.choices[0].message.content, reply.responseContent.parts];
+    });
+    expect(result).toEqual(['formatted synthetic prose', [{ text: 'formatted synthetic prose' }]]);
+    expect([starts, claims]).toEqual([1, 1]);
+});
+
 for (const switched of [false, true]) {
     test(`Carbon task reconnects after reload and executes its tool once (connection switched: ${switched})`, async ({ page, context }) => {
         const invocations = await checkVertexRecovery(page, context, switched);
@@ -25,13 +68,27 @@ async function checkVertexRecovery(page, context, switched) {
     let loseStartAck = true;
     let interruptedRead = false;
     let waitingPolls = 0;
-    await context.route('**/api/backends/chat-completions/generation-jobs**', async route => {
+    await context.addInitScript(() => {
+        const original = window.fetch;
+        window.fetch = function (input, init) {
+            const url = new URL(input instanceof Request ? input.url : input, location.href);
+            if (url.pathname === '/api/backends/chat-completions/generate' && init?.method === 'POST') {
+                const payload = JSON.parse(init.body);
+                payload.messages.push({ role: 'system', content: 'synthetic final preset marker' });
+                init = { ...init, body: JSON.stringify(payload) };
+            }
+            return original.call(this, input, init);
+        };
+    });
+    await context.route(/\/chat-completions\/(?:generation-jobs|generate\?backgroundJob=)/, async route => {
         const request = route.request();
-        const [id, action] = new URL(request.url()).pathname.split('/generation-jobs').pop().split('/').slice(1);
+        const address = new URL(request.url());
+        const [id, action] = address.searchParams.has('backgroundJob') ? [address.searchParams.get('backgroundJob'), 'start']
+            : address.pathname.split('/generation-jobs').pop().split('/').slice(1);
         if (!id) {
             const key = String(jobs.size + 1);
             jobs.set(key, { state: 'reserved' });
-            return route.fulfill({ status: 201, json: { id: key } });
+            return route.fulfill({ status: 201, json: { id: key, chatCompletionStart: true } });
         }
         const job = jobs.get(id);
         if (!job) return route.fulfill({ status: 404, body: '' });
@@ -40,6 +97,8 @@ async function checkVertexRecovery(page, context, switched) {
             job.state = 'running';
             const payload = request.postDataJSON();
             job.stream = payload.stream;
+            expect(address.pathname).toBe('/api/backends/chat-completions/generate');
+            expect(payload.messages.at(-1).content).toBe('synthetic final preset marker');
             submissions.push(payload);
             if (loseStartAck) { loseStartAck = false; return route.abort('connectionreset'); }
             return route.fulfill({ status: 202, body: '' });
@@ -94,6 +153,10 @@ async function checkVertexRecovery(page, context, switched) {
             } else {
                 await core.newAssistantChat({ temporary: false });
             }
+            // This fixture supplies the provider for the whole test, including after a reload.
+            core.eventSource.on(core.event_types.ONLINE_STATUS_CHANGED, status => {
+                if (status === 'no_connection') core.setOnlineStatus('test');
+            });
             core.setOnlineStatus('test');
             const checkbox = document.querySelector('#vertex_job_enabled');
             checkbox.checked = true;
