@@ -16,6 +16,8 @@ usage() {
 SillyTavern Vertex 手机管理
   st                 首次安装并启动；已安装时显示菜单
   st start           启动（Ctrl+C 停止）
+  st keep-awake on   让本安装在酒馆运行期间持有 Termux 唤醒锁
+  st keep-awake off  下次启动时不代管唤醒锁
   st update          备份后更新源码和依赖，不自动启动
   st backup          备份手机本地数据、配置和扩展
   st status          查看版本和源码状态
@@ -173,6 +175,16 @@ update_app() {
     info '更新完成。输入 st start 启动。'
 }
 
+set_keep_awake() {
+    assert_checkout
+    local flag="$ST_DIR/.git/termux-keep-awake"
+    case "${1:-}" in
+        on) : > "$flag"; info '下次启动起，酒馆运行期间持有 Termux 唤醒锁。' ;;
+        off) rm -f -- "$flag"; info '下次启动起，由你自行管理 Termux 唤醒锁。' ;;
+        *) fail '用法：st keep-awake on 或 st keep-awake off' ;;
+    esac
+}
+
 start_app() {
     ensure_dependencies
     assert_checkout
@@ -183,6 +195,14 @@ start_app() {
     info '只监听本机；保持 Termux 运行。生成中的请求不会由管理脚本自动重试。'
     (
         cd -- "$ST_DIR"
+        if [[ -f .git/termux-keep-awake ]]; then
+            if command -v termux-wake-lock >/dev/null && command -v termux-wake-unlock >/dev/null && termux-wake-lock; then
+                trap 'termux-wake-unlock || info "请在 Termux 通知栏释放唤醒锁。"' EXIT
+                info '已请求锁屏保活，停止酒馆时自动释放。'
+            else
+                info '未能取得 Termux 唤醒锁，熄屏时系统可能暂停连接。'
+            fi
+        fi
         # Record the actual Node PID so another manager terminal refuses updates.
         bash -c 'printf "%s\n" "$$" > .git/termux-server.pid; exec node server.js --listen false --browserLaunchEnabled false --dataRoot ./data --port "$1"' bash "$ST_PORT"
     )
@@ -219,7 +239,7 @@ main() {
     local action="${1:-auto}"
     case "$action" in
         help|-h|--help) usage; return ;;
-        auto|install|start|update|backup|status) ;;
+        auto|install|start|update|backup|status|keep-awake) ;;
         *) usage; fail "未知操作：$action" ;;
     esac
     require_termux
@@ -234,6 +254,7 @@ main() {
             fi ;;
         install) install_app ;;
         start) start_app ;;
+        keep-awake) set_keep_awake "${2:-}" ;;
         update) update_app ;;
         backup) backup_data ;;
         status) show_status ;;

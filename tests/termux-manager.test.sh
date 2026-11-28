@@ -32,7 +32,7 @@ case "${1:-}" in
     -e) exit 0 ;;
     -p)
         if [[ "$2" == process.arch ]]; then printf 'arm64\n'; else printf '24\n'; fi ;;
-    server.js) printf '%s\n' "$*" >> "$TEST_ROOT/node-calls" ;;
+    server.js) printf '%s\n' "$*" >> "$TEST_ROOT/node-calls"; exit "${TEST_NODE_EXIT:-0}" ;;
     *) exit 90 ;;
 esac
 MOCK
@@ -107,6 +107,22 @@ before_hash="$(git -C "$app_dir" hash-object data/chat.txt)"
 run_manager install_app > "$test_root/reinstall-output" 2>&1
 [[ "$(git -C "$app_dir" hash-object data/chat.txt)" == "$before_hash" ]] || nope 'data overwritten'
 pass 'repeat install preserves existing data and private configuration'
+
+for command in termux-wake-lock termux-wake-unlock; do
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "${0##*/}" >> "$TEST_ROOT/wake-events"\n' > "$test_root/bin/$command"
+    chmod +x "$test_root/bin/$command"
+done
+run_manager main keep-awake on
+run_manager start_app > "$test_root/start-awake" 2>&1
+[[ "$(cat "$test_root/wake-events")" == $'termux-wake-lock\ntermux-wake-unlock' ]] || nope 'unpaired wake lock on normal exit'
+: > "$test_root/wake-events"
+TEST_NODE_EXIT=42 must_fail start_app
+[[ "$(cat "$test_root/wake-events")" == $'termux-wake-lock\ntermux-wake-unlock' ]] || nope 'unpaired wake lock on error'
+run_manager main keep-awake off
+: > "$test_root/wake-events"
+run_manager start_app > "$test_root/start-unmanaged" 2>&1
+[[ ! -s "$test_root/wake-events" ]] || nope 'changed a manually managed wake lock'
+pass 'opt-in wake lock survives launch and is released on server exit or failure'
 
 calls_before="$(wc -l < "$test_root/npm-calls")"
 run_manager update_app > "$test_root/current-output" 2>&1

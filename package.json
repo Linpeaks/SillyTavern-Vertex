@@ -118,7 +118,7 @@
     "version": "1.19.1",
     "personalEdition": {
         "name": "Linpeak",
-        "version": "0.4.1"
+        "version": "0.4.2"
     },
     "scripts": {
         "init": "node src/server-init.js",

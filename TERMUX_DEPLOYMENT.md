@@ -42,6 +42,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Linpeaks/SillyTavern-Vertex/
 | `st update` | 停服后检查源码、备份、更新，不自动启动 |
 | `st backup` | 停服后备份数据、配置、服务端插件和公共第三方扩展 |
 | `st status` | 当前提交、分支和源码修改状态 |
+| `st keep-awake on` / `off` | 保存本安装的锁屏保活偏好，下次启动时生效 |
 | `st install` | 安装或补全依赖；已有安装不自动更新源码 |
 
 `st` 是 `$PREFIX/bin/st` 中的小启动器，不修改 `.bashrc`。
@@ -51,9 +52,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Linpeaks/SillyTavern-Vertex/
 bash ~/SillyTavern-Vertex/termux.sh
 ```
 
-保持 Termux 运行，并在系统设置中按需允许后台活动。
-可手动执行 `termux-wake-lock`，用完执行 `termux-wake-unlock`；Android 仍可能
-回收进程。停止酒馆用启动终端的 Ctrl+C。脚本不托管后台服务、不扫描或结束其他酒馆。
+需要熄屏长时间生成时，先执行一次 `st keep-awake on`，再用 `st start` 启动。
+酒馆在运行期间通过 Termux 唤醒锁保持 CPU 可用，Ctrl+C 正常停止时释放。开启会增加待机耗电。
+Termux 的所有终端共用这把锁；自行管理其他任务唤醒锁的用户可保留默认设置，或用
+`st keep-awake off` 退出代管。红米等手机还可在系统的 Termux 电量详情中允许后台联网。
+如果手动强制终止服务后通知栏仍显示唤醒锁，可用 `termux-wake-unlock` 释放。
 
 ## 切后台、刷新和锁屏
 
